@@ -1,0 +1,8 @@
+
+flags:
+
+OK : no error
+D: dirty
+P: push issue
+L: pull issue
+R: remote issue
