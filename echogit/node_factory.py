@@ -1,0 +1,32 @@
+"""
+Choose from file the node type to use, and create the node instance.
+"""
+
+from pathlib import Path
+from typing import Optional
+
+from echogit.config import Config
+from echogit.folder_node import FolderNode
+from echogit.node import Node
+from echogit.sync.git_sync import GitProjectNode
+
+
+def from_path(
+    path: Path, *, config: Optional[Config] = None, parent: Optional[Node] = None
+) -> Node:
+    """
+    Instantiate the correct Node subclass for `path`.
+    Exactly one of `config` or `parent` must be provided.
+    """
+    p = Path(path).resolve()
+    if (p / ".git").is_dir() or p.suffix == ".git":
+        cls = GitProjectNode
+    else:
+        cls = FolderNode
+
+    # pass exactly one of config or parent to Node.__init__
+    if parent is not None and config is None:
+        return cls(path=p, parent=parent)
+    if config is not None and parent is None:
+        return cls(path=p, config=config)
+    raise ValueError("Must pass exactly one of config or parent")
