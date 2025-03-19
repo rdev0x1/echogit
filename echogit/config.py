@@ -32,6 +32,12 @@ class Config(BaseConfig):
         self.ignore_peers_down = self.config.getboolean(
             'DEFAULT', 'ignore_peers_down', fallback=False)
 
+        # list of folder that are collapsed at startup. Needed on UI for example.
+        # collapsed folder contains projects we are not interested in.
+        # We still can open the folder.
+        self.collapse_folders = self.get_list(
+            'DEFAULT', 'collapse_folders', fallback=[])
+
         self._peers = {}
         # self.peers = self._load_peers()
 
@@ -106,5 +112,6 @@ if __name__ == "__main__":
     config = Config(test_path)
     print(f"Projects Path: {config.projects_path}")
     print(f"Git Path: {config.git_path}")
+    print(f"collapse folders: {config.collapse_folders}")
 
     print(f"Peers: {[f'{peer.name} (Priority: {peer.priority}, Host: {peer.host})' for _key, peer in config.peers.items()]}")
