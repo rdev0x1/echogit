@@ -13,6 +13,9 @@ class SyncFolder(Node):
         _path = self._get_folder_name(path)
         super().__init__(_path, path=path, parent=parent, config=config)
 
+    def get_type(self):
+        return Node.NodeType.SYNC_FOLDER
+
     def is_folder(self):
         return True
 

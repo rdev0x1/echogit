@@ -12,7 +12,7 @@ class SyncNodeConfig(BaseConfig):
         self.project_path = project_path
         self.sync_type = self.config.get(
             "ECHOGIT", "sync_type", fallback=SyncNodeConfig.SYNC_TYPE_GIT)
-        self.auto_commit = self.config.getboolean("ECHOGIT", "auto_commit", fallback=False)
+        self.auto_commit = self.config.getboolean("DEFAULT", "auto_commit", fallback=False)
         self.sync_branches = self.get_list(
             "BRANCHES", "sync_branches", fallback=[])
         self.sync_remotes = self.get_list(
@@ -53,3 +53,6 @@ class SyncNodeConfig(BaseConfig):
         # Save the initialized config to the file
         config.config_file = file_name
         config.save_to_file()
+
+    def print(self):
+        print(f"Auto commit: {self.auto_commit}")

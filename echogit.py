@@ -6,6 +6,7 @@ from echogit.tui import run_ui
 from echogit.node_factory import NodeFactory
 from echogit.version import Version
 from echogit.sync_node_config import SyncNodeConfig
+from echogit.node import Node
 
 
 def main():
@@ -30,6 +31,8 @@ def main():
 
     # config command
     config_parser = subparsers.add_parser("config", help="Show configuration")
+    config_parser.add_argument("folder", nargs="?", default=None,
+                             help="Folder to sync")
     config_parser.add_argument(
         "-g", "--get", action="store_true", help="Get the configuration")
     config_parser.add_argument(
@@ -116,7 +119,7 @@ def _parse_set_string(set_string):
         value = value.strip()
 
         # Convert "true"/"false" to boolean for ignore_peers_down
-        if key == "ignore_peers_down":
+        if key == "ignore_peers_down" or key == "auto_commit":
             if value.lower() in ['true', 'yes', '1']:
                 config_updates[key] = True
             elif value.lower() in ['false', 'no', '0']:
@@ -129,7 +132,7 @@ def _parse_set_string(set_string):
     return config_updates
 
 
-def handle_config_command(args):
+def _handle_echogit_config_command(args):
     config = Config.get_local_instance()
     if args.set:
         # Parse the set string
@@ -148,10 +151,39 @@ def handle_config_command(args):
 
     # If `--get` was used or `--set` was not provided
     if args.get or not args.set:
+        config.print()
+
+
+def _handle_project_config_command(args):
+    node = NodeFactory.from_folder(args.folder)
+    if node.get_type() != Node.NodeType.GIT_PROJECT and node.get_type() != Node.NodeType.RSYNC_PROJECT:
+        print(f"Invalid project {args.folder}, type={node.get_type()}")
+        return -1
+    config = node.node_config
+
+    if args.set:
+        # Parse the set string
+        config_updates = _parse_set_string(args.set)
+
+        # Update the config in the [DEFAULT] section
+        if 'auto_commit' in config_updates:
+            config.config.set('DEFAULT', 'auto_commit', str(config_updates['auto_commit']))
+            config.auto_commit = config_updates['auto_commit']
+
+        # Save the updated config if needed
+        config.save_to_file()
+
+    # If `--get` was used or `--set` was not provided
+    if args.get or not args.set:
         # Display current config
-        print(f"Data Path: {config.projects_path}")
-        print(f"Git Path: {config.git_path}")  # Git path is not settable
-        print(f"Ignore peers down: {config.ignore_peers_down}")
+        config.print()
+
+
+def handle_config_command(args):
+    if args.folder is None:
+        _handle_echogit_config_command(args)
+    else:
+        _handle_project_config_command(args)
 
 
 def handle_version_command(peer_str, cached):

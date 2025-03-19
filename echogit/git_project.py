@@ -9,6 +9,9 @@ class GitProject(Node):
         name = self._get_folder_name(path)
         super().__init__(name, path=path, parent=parent, config=config)
 
+    def get_type(self):
+        return Node.NodeType.GIT_PROJECT
+
     def scan(self):
         remotes = self.node_config.sync_remotes
         for remote in remotes:

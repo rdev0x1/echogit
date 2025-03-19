@@ -37,6 +37,10 @@ class Node:
         else:
             self.node_config = None
 
+    def get_type(self):
+        return Node.NodeType.UNKNOWN
+
+
     def _get_folder_name(self, path):
         # Expand '~' to the full home directory path
         path = os.path.expanduser(path)
