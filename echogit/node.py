@@ -40,7 +40,6 @@ class Node:
     def get_type(self):
         return Node.NodeType.UNKNOWN
 
-
     def _get_folder_name(self, path):
         # Expand '~' to the full home directory path
         path = os.path.expanduser(path)
@@ -62,9 +61,26 @@ class Node:
         return Node._has_subdirectory(path, ".git")
 
     @staticmethod
-    def _is_echogit_project(path):
+    def _is_echogit_git_project(path):
         return Node._has_subdirectory(path, ".echogit") and \
             Node._has_subdirectory(path, ".git")
+
+    @staticmethod
+    def _is_echogit_rsync_project(path):
+        return Node._has_subdirectory(path, ".echogit") and \
+            not Node._has_subdirectory(path, ".git") and \
+            Node.get_type_from_config(path) == Node.NodeType.RSYNC_PROJECT
+
+    @staticmethod
+    def get_type_from_config(path):
+        config_file = os.path.join(path, ".echogit/config.ini")
+        sync_type = SyncNodeConfig.get_sync_type_from_config(config_file)
+        if sync_type == SyncNodeConfig.SYNC_TYPE_GIT:
+            return Node.NodeType.GIT_PROJECT
+        elif sync_type == SyncNodeConfig.SYNC_TYPE_RSYNC:
+            return Node.NodeType.RSYNC_PROJECT
+        else:
+            return Node.NodeType.UNKNOWN
 
     @staticmethod
     def get_type_from_folder(folder_path):
@@ -79,11 +95,11 @@ class Node:
             return Node.NodeType.BARE_GIT_REPO
         elif folder_path.endswith(".rsync"):
             return Node.NodeType.BARE_RSYNC_REPO
-        elif Node._is_echogit_project(folder_path):
-            # FIXME: could be rsync
+        elif Node._is_echogit_git_project(folder_path):
             return Node.NodeType.GIT_PROJECT
+        elif Node._is_echogit_rsync_project(folder_path):
+            return Node.NodeType.RSYNC_PROJECT
         elif Node._is_git_project(folder_path):
-            # FIXME: git without echogit folder
             return Node.NodeType.UNKNOWN
         else:
             return Node.NodeType.SYNC_FOLDER

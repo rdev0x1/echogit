@@ -1,41 +1,21 @@
 import argparse
-from echogit.node import Node
-from echogit.repository_peer import RepositoryPeer
+from echogit.git_repository_peer import GitRepositoryPeer
 from echogit.config import Config
+from echogit.project import Project
 
 
-class GitProject(Node):
+class GitProject(Project):
     def __init__(self, path, *, config=None, parent=None):
-        name = self._get_folder_name(path)
-        super().__init__(name, path=path, parent=parent, config=config)
+        super().__init__(path=path, parent=parent, config=config)
+        if self.node_config.sync_type != "git":
+            raise "Invalide git project"
 
     def get_type(self):
         return Node.NodeType.GIT_PROJECT
 
-    def scan(self):
-        remotes = self.node_config.sync_remotes
-        for remote in remotes:
-            peer = self.config.get_peer(remote)
-            if peer is None:
-                print(f"cant sync {remote}. not in: {self.config.get_peers()}")
-                continue
-            repo = RepositoryPeer(path=self.path, peer=peer,
+    def createRepositoryPeer(self, peer):
+        return GitRepositoryPeer(path=self.path, peer=peer,
                                   config=self.config, parent=self)
-            repo.scan()
-            self.add_child(repo)
-
-    def sync(self, verbose=False):
-        success, total = 0, 0
-
-        for child in self.children:
-            child_success, child_total = child.sync(verbose=verbose)
-            success += child_success
-            total += child_total
-
-        print(f"{self.name}: {success}/{total}")
-
-        # Success is 1 if all children succeeded, otherwise 0
-        return int(success == total and total > 0), 1
 
 
 if __name__ == "__main__":

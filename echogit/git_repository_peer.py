@@ -5,7 +5,7 @@ import argparse
 from echogit.node import Node
 
 
-class RepositoryPeer(Node):
+class GitRepositoryPeer(Node):
     def __init__(self, *, path, peer, config=None, parent=None):
         super().__init__(peer.name, path=path, parent=parent, config=config)
         self.peer = peer
@@ -34,7 +34,12 @@ class RepositoryPeer(Node):
 
         success = 1
         for child in self.children:
-            child_success, child_total = child.sync(verbose=verbose)
+            try:
+                child_success, child_total = child.sync(verbose=verbose)
+            except ValueError as e:
+                child_success = 0
+                child_total = 1
+                print(f"Cannot sync {child.name}")
             if child_success == 0:
                 success = 0
         return success, 1

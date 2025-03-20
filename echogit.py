@@ -220,6 +220,7 @@ def handle_sync_command(folder, verbose):
 
 
 def _clone_project(folder, peers):
+    sync_type = SyncNodeConfig.SYNC_TYPE_UNKNOWN
     for peer in peers:
         remote_url = peer.get_remote_project_url(folder)
 
@@ -227,19 +228,33 @@ def _clone_project(folder, peers):
             print(f"Skipping peer {peer.name}: peer is down")
             continue
 
-        print(f"Attempting to clone from peer {peer.name} / {remote_url}")
-        command = ["git", "clone", "--origin", peer.name, remote_url, folder]
+        if not remote_url:
+            print(f"Skipping peer {peer.name}: no valid remote URL found for {folder}")
+            continue
+
+        print(f"Attempting to sync from peer {peer.name} / {remote_url}")
+
+        # Determine the sync type based on the URL's extension
+        if remote_url.endswith('.git'):
+            sync_type = SyncNodeConfig.SYNC_TYPE_GIT
+            command = ["git", "clone", "--origin", peer.name, remote_url, folder]
+        elif remote_url.endswith('.rsync'):
+            command = ["rsync", "-avz", f"{remote_url}/", folder]
+            sync_type = SyncNodeConfig.SYNC_TYPE_RSYNC
+        else:
+            print(f"Unknown sync type for {remote_url}, skipping peer {peer.name}")
+            continue
 
         try:
             result = subprocess.run(
                 command, capture_output=True, text=True, check=True)
             if result.returncode == 0:
                 print(f"Successfully cloned {folder} from {peer.name}")
-                return  True
+                return  sync_type
         except subprocess.CalledProcessError as e:
             print(f"Failed to clone from peer {peer.name}: {e.stderr}")
 
-    return False
+    return SyncNodeConfig.SYNC_TYPE_UNKNOWN
 
 
 def handle_clone_command(folder, peer):
@@ -250,8 +265,9 @@ def handle_clone_command(folder, peer):
     if os.path.exists(folder):
         raise FileExistsError(f"Cannot clone into existing folder: {folder}")
 
-    if _clone_project(folder,peers):
-        SyncNodeConfig.create_default_config(folder, SyncNodeConfig.SYNC_TYPE_GIT)
+    sync_type = _clone_project(folder, peers)
+    if sync_type != SyncNodeConfig.SYNC_TYPE_UNKNOWN:
+        SyncNodeConfig.create_default_config(folder, sync_type)
     else:
         print(f"Error: Could not clone {folder} from any peer")
 

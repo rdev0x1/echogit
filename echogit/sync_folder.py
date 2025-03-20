@@ -2,6 +2,7 @@ import subprocess
 import argparse
 import os
 from echogit.git_project import GitProject
+from echogit.rsync_project import RsyncProject
 from echogit.bare_git_repo import BareGitRepo
 from echogit.bare_rsync_repo import BareRsyncRepo
 from echogit.node import Node
@@ -29,6 +30,8 @@ class SyncFolder(Node):
 
             if node_type == Node.NodeType.GIT_PROJECT:
                 child = GitProject(full_path, config=conf, parent=self)
+            elif node_type == Node.NodeType.RSYNC_PROJECT:
+                child = RsyncProject(full_path, config=conf, parent=self)
             elif node_type == Node.NodeType.BARE_GIT_REPO:
                 child = BareGitRepo(full_path, config=conf, parent=self)
             elif node_type == Node.NodeType.BARE_RSYNC_REPO:

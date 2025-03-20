@@ -1,4 +1,5 @@
 import os
+import configparser
 from echogit.base_config import BaseConfig
 from echogit.config import Config
 
@@ -6,6 +7,7 @@ from echogit.config import Config
 class SyncNodeConfig(BaseConfig):
     SYNC_TYPE_GIT = 'git'
     SYNC_TYPE_RSYNC = 'rsync'
+    SYNC_TYPE_UNKNOWN = None
 
     def __init__(self, project_path, config_file=None, config_string=None):
         super().__init__(config_file, config_string)
@@ -19,6 +21,14 @@ class SyncNodeConfig(BaseConfig):
             "BRANCHES", "sync_remotes", fallback=[])
         self.upstream = self.config.get(
             "BRANCHES", "upstream", fallback="upstream")
+
+    @staticmethod
+    def get_sync_type_from_config(config_file):
+        if not os.path.exists(config_file):
+            return SyncNodeConfig.SYNC_TYPE_UNKNOWN
+        config = configparser.ConfigParser()
+        config.read(config_file)
+        return config.get("ECHOGIT", "sync_type", fallback=SyncNodeConfig.SYNC_TYPE_UNKNOWN)
 
     @staticmethod
     def create_default_config(project_path, sync_type=SYNC_TYPE_GIT):

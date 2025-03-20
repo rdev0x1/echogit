@@ -1,10 +1,10 @@
-import sys
 import ast
-import os
 import json
-import subprocess
+import os
+import re
 import socket
-from pathlib import Path
+import sys
+import subprocess
 from echogit.config import Config
 from echogit.version import Version
 
@@ -126,31 +126,62 @@ class Peer:
 
     def get_remote_project_url(self, path):
         """
-        Return ssh address of a project located at path folder.
+        Return the ssh address of a project located at the path folder.
         This is used by git clone or git remote add.
         """
-        # Ensure paths have trailing slashes
-        config = Config.get_local_instance()
         if self.is_down:
             return None
+
+        self._fetch_config_if_needed()
+        if self.config is None:
+            return None
+
+        data_path = Config.get_local_instance().projects_path
+        if not path.startswith(data_path):
+            raise ValueError(f"project_path {path} must start with data_path: {data_path}")
+
+        # Determine the relative project path
+        relative_project_path = os.path.relpath(path, data_path)
+        project_base_path = os.path.join(self.config.git_path, relative_project_path)
+
+        sync_type = self._determine_sync_type(project_base_path)
+        if sync_type is None:
+            raise ValueError(f"No .git or .rsync directory found for the project at {project_base_path}")
+
+        if sync_type == "rsync":
+            # rsync don't understand url when started with ssh://
+            project_base_path = re.sub("^ssh://", "", project_base_path)
+
+
+        return f"{project_base_path}.{sync_type}"
+
+    def _fetch_config_if_needed(self):
+        """Fetch config if it's not already loaded."""
         if self.config is None:
             self.fetch_config()
-            if self.config is None:
-                return None
-        data_path = config.projects_path
-        git_path = self.config.git_path
 
-        # Check if project_path starts with data_path
-        if not path.startswith(data_path):
-            raise ValueError(
-                f"project_path must start with data_path: {data_path}")
+    def _determine_sync_type(self, project_base_path):
+        """
+        Determine the sync type ('git' or 'rsync') by checking the folder's existence
+        locally or remotely depending on whether the peer is localhost.
+        """
+        if self.is_localhost():
+            if os.path.isdir(f"{project_base_path}.git"):
+                return "git"
+            if os.path.isdir(f"{project_base_path}.rsync"):
+                return "rsync"
+        else:
+            if self._remote_directory_exists(f"{project_base_path}.git"):
+                return "git"
+            if self._remote_directory_exists(f"{project_base_path}.rsync"):
+                return "rsync"
+        return None
 
-        # Replace the data_path part with git_path and append .git
-        relative_project_path = os.path.relpath(path, data_path)
-        git_project_path = os.path.join(
-            git_path, relative_project_path) + ".git"
-
-        return git_project_path
+    def _remote_directory_exists(self, ssh_directory_path):
+        """Check if a directory exists on a remote peer via SSH."""
+        # ssh_directory_path start with ssh://peer_name:. Remove it
+        directory_path = ssh_directory_path.split(":")[-1]
+        return self._execute_remote_command(f"test -d {directory_path}") is not None
 
     def get_remote_projects(self, cached):
         """
@@ -162,8 +193,7 @@ class Peer:
             if cached_projects:
                 return cached_projects
 
-        if self.config is None:
-            self.fetch_config()
+        self._fetch_config_if_needed()
 
         # If not using cache or cache is missing, fetch remote projects
         projects = self._fetch_remote_projects()
