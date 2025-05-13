@@ -32,7 +32,7 @@ class SyncBranch(Node):
         pass
 
     def _save_result_logs(self, key, result, verbose):
-        self.errors[key] = result.returncode
+        self.errors[key] = int(result.returncode)
         self.stderr[key] = result.stderr
         self.stdout[key] = result.stdout
 

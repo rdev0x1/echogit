@@ -43,7 +43,7 @@ class StatusCache:
         config = configparser.ConfigParser()
         config.read(self.cache_path)
 
-        self.errors = dict(config['Errors'])
+        self.errors = {k: int(v) for k, v in config['Errors'].items()}
         self.stderr = dict(config['Stderr'])
         self.stdout = dict(config['Stdout'])
         self.peer_down = config['Meta'].getboolean('peer_down', False)
