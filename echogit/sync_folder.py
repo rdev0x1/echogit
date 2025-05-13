@@ -5,6 +5,7 @@ from echogit.git_project import GitProject
 from echogit.rsync_project import RsyncProject
 from echogit.bare_git_repo import BareGitRepo
 from echogit.bare_rsync_repo import BareRsyncRepo
+from echogit.git_missing_echogit import GitMissingEchogit
 from echogit.node import Node
 from echogit.config import Config
 
@@ -38,10 +39,15 @@ class SyncFolder(Node):
                 child = BareRsyncRepo(full_path, config=conf, parent=self)
             elif node_type == Node.NodeType.SYNC_FOLDER:
                 child = SyncFolder(full_path, config=conf, parent=self)
+            elif node_type == Node.NodeType.GIT_MISSING_ECHOGIT:
+                child = GitMissingEchogit(full_path, config=conf, parent=self)
             else:
                 continue
 
             if child:
+                if child.has_error(check_children=False):
+                    self.add_child(child)
+                    continue
                 child.scan()
                 if child.is_folder() and not child.children:
                     continue

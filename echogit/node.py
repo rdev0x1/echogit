@@ -10,6 +10,7 @@ class Node:
         RSYNC_PROJECT = "RsyncProject"
         BARE_GIT_REPO = "BareGitRepo"
         BARE_RSYNC_REPO = "BareRsyncRepo"
+        GIT_MISSING_ECHOGIT = "GitMissingEchogit"
         UNKNOWN = "Unknown"
 
     def __init__(self, name, *, path=None, parent=None, config=None):
@@ -19,6 +20,7 @@ class Node:
         self.parent = parent
         self.config = config
         self.collapse = False
+        self.node_error = ""
 
         config_file = os.path.join(path, ".echogit/config.ini")
 
@@ -89,6 +91,8 @@ class Node:
             return Node.NodeType.UNKNOWN
         elif folder_name == ".echogit":
             return Node.NodeType.UNKNOWN
+        elif folder_name == ".git":
+            return Node.NodeType.UNKNOWN
         # folder ending .git are bare git used for repository. Not working project
         # Same for .rsync folders. See readme for more information.
         elif folder_path.endswith(".git"):
@@ -100,7 +104,7 @@ class Node:
         elif Node._is_echogit_rsync_project(folder_path):
             return Node.NodeType.RSYNC_PROJECT
         elif Node._is_git_project(folder_path):
-            return Node.NodeType.UNKNOWN
+            return Node.NodeType.GIT_MISSING_ECHOGIT
         else:
             return Node.NodeType.SYNC_FOLDER
 
@@ -133,12 +137,17 @@ class Node:
         self.children.append(child)
 
     def get_project_state_str(self):
+        # git errors ?
         key_flag = {"remote_add": "R", "push": "P", "pull": "L", "status": "D"}
         errors = self.get_errors()
-
         if errors:
             return ",".join(key_flag[key] for key in errors if key in key_flag)
 
+        # other errors ?
+        if self.has_error():
+            return "Err"
+
+        # No errors
         self.collapse = True
         return "OK"
 
@@ -153,11 +162,17 @@ class Node:
     def print(self):
         print(f"{self.name}:[{self.get_project_state_str()}]")
 
-    def has_error(self):
+    def has_error(self, check_children=True):
+        if self.node_error:
+            return True
+        if check_children is False:
+            return False
         return any(child.has_error() for child in self.children)
 
     def get_logs(self):
         _str = f"{self.name}\n"
+        if self.node_error:
+            _str += self.node_error
         for child in self.children:
             _str += child.get_logs() + "\n"
         return _str
@@ -167,6 +182,12 @@ class Node:
 
     def scan(self):
         pass
+
+    def _sync(self, success, total):
+        print(f"{self.name}: {success}/{total}")
+
+        # Success is 1 if all children succeeded, otherwise 0
+        return int(success == total and total > 0), 1
 
     def sync(self, verbose=False):
         raise NotImplementedError("Subclasses must implement sync method.")

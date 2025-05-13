@@ -28,8 +28,4 @@ class Project(Node):
             success += child_success
             total += child_total
 
-        print(f"{self.name}: {success}/{total}")
-
-        # Success is 1 if all children succeeded, otherwise 0
-        return int(success == total and total > 0), 1
-
+        return self._sync(success, total)

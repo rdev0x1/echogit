@@ -7,7 +7,9 @@ from echogit.project import Project
 class GitProject(Project):
     def __init__(self, path, *, config=None, parent=None):
         super().__init__(path=path, parent=parent, config=config)
-        if self.node_config.sync_type != "git":
+        if self.node_config is None:
+            self.node_error = "Git project but not echotgit"
+        elif self.node_config.sync_type != "git":
             raise "Invalide git project"
 
     def get_type(self):
