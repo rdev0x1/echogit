@@ -57,8 +57,7 @@ class SyncFolder(Node):
         success, total = 0, 0
         # for child_success, child_total in (child.sync(verbose=verbose) for child in self.children):
         for child in self.children:
-            child_success, child_total = child.sync(
-                verbose=verbose)
+            child_success, child_total = child.sync(verbose=verbose)
             success += child_success
             total += child_total
         return success, total

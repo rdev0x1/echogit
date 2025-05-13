@@ -1,5 +1,6 @@
 import urwid
 from echogit.config import Config
+from echogit.node_factory import NodeFactory
 from echogit.sync_folder import SyncFolder
 
 
@@ -165,12 +166,12 @@ def build_ui(root):
     return urwid.ListBox(list_walker)
 
 
-def run_ui():
+def run_ui(folder):
     global main_loop
-    config = Config.get_local_instance()
-    root = SyncFolder(config.projects_path, config=config)
-    root.scan()
-    root.sync()
+
+    node = NodeFactory.from_folder(folder)
+    node.scan()
+    node.sync()
 
     palette = [
         ('reversed', 'standout', ''),
@@ -180,7 +181,7 @@ def run_ui():
         ('hidden', 'black', 'black'),
     ]
 
-    listbox = build_ui(root)
+    listbox = build_ui(node)
     main_loop = urwid.MainLoop(listbox, palette)
     main_loop.run()
 

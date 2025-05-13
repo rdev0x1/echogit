@@ -50,7 +50,9 @@ def main():
         "-c", "--cached", action="store_true", help="Use cached data")
 
     # tui command
-    subparsers.add_parser("tui", help="Launch TUI interface")
+    tui_parser = subparsers.add_parser("tui", help="Launch TUI interface")
+    tui_parser.add_argument(
+        "folder", nargs="?", default=None, help="Folder to sync")
 
     # version command
     version_parser = subparsers.add_parser("version", help="Print version")
@@ -79,7 +81,9 @@ def main():
         folder = args.folder
         handle_clone_command(folder, args.peer)
     elif args.command == "tui":
-        run_ui()
+        config = Config.get_local_instance()
+        folder = args.folder or config.projects_path
+        run_ui(folder)
     elif args.command == "list":
         config = Config.get_local_instance()
         folder = args.folder or config.git_path or config.projects_path
