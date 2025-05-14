@@ -113,6 +113,8 @@ class ProjectWidget(urwid.WidgetWrap):
                 return None
             self.show_logs()
             return None
+        if key in ('q', 'Q'):
+            raise urwid.ExitMainLoop()
 
         return key
 
