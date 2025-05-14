@@ -96,13 +96,18 @@ class SyncBranch(Node):
 
     def get_logs(self):
         _str = f"branch={self.name}\n"
+        if self.node_error:
+            _str += self.node_error
         for key in ["remote_add", "push", "pull", "status"]:
-            _str += f"-----{key} returnCode={self.errors[key]}-----\n"
-            _str += f"stdout={self.stdout[key]}\n"
-            _str += f"stderr={self.stderr[key]}\n"
+            if self.errors[key]:
+                _str += f"-----{key} returnCode={self.errors[key]}-----\n"
+                _str += f"stdout={self.stdout[key]}\n"
+                _str += f"stderr={self.stderr[key]}\n"
         return _str
 
     def has_error(self):
+        if self.node_error:
+            return True
         for key in ["remote_add", "push", "pull", "status"]:
             if self.errors[key] != 0:
                 return True

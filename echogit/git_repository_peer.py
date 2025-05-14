@@ -39,10 +39,20 @@ class GitRepositoryPeer(Node):
             except ValueError as e:
                 child_success = 0
                 child_total = 1
-                print(f"Cannot sync {child.name}")
+                child.node_error = str(e)
+                print(f"Cannot sync {child.name}: {child.node_error}")
             if child_success == 0:
                 success = 0
         return success, 1
+
+    def get_logs(self):
+        _str = f"peer={self.name}\n"
+        if self.peer.is_down:
+            _str += "Ignore it: is down\n"
+            return _str
+        _str += Node.get_logs(self)
+        return _str
+
 
 
 if __name__ == "__main__":

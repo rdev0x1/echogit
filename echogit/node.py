@@ -170,7 +170,7 @@ class Node:
         return any(child.has_error() for child in self.children)
 
     def get_logs(self):
-        _str = f"{self.name}\n"
+        _str = ""
         if self.node_error:
             _str += self.node_error
         for child in self.children:

@@ -29,3 +29,8 @@ class Project(Node):
             total += child_total
 
         return self._sync(success, total)
+
+    def get_logs(self):
+        _str = f"project={self.name}\n"
+        _str += Node.get_logs(self)
+        return _str
