@@ -48,9 +48,8 @@ class SyncBranch(Node):
 
         # Get existing remotes
         result = subprocess.run(["git", "remote", "get-url", self.peer.name],
-                                cwd=self.path, stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE)
-        remote_url = result.stdout.decode("utf-8").strip()
+                                cwd=self.path, text=True, capture_output=True)
+        remote_url = result.stdout.strip()
 
         if result.returncode == 0:  # Remote exists
             if remote_url == git_path:
@@ -61,12 +60,14 @@ class SyncBranch(Node):
                     print(f"Remote {self.peer.name} => {git_path}")
                 result = subprocess.run(["git", "remote", "set-url",
                                          self.peer.name, git_path],
-                                        cwd=self.path)
+                                        cwd=self.path, text=True,
+                                        capture_output=True)
         else:
             if verbose:
                 print(f"Adding remote {self.peer.name} = {git_path}")
             result = subprocess.run(["git", "remote", "add", self.peer.name,
-                                     git_path], cwd=self.path)
+                                     git_path], cwd=self.path, text=True,
+                                    capture_output=True)
 
         self._save_result_logs("remote_add", result, verbose)
 
@@ -122,10 +123,6 @@ class SyncBranch(Node):
                                 cwd=self.path, text=True, capture_output=True)
         result = subprocess.run(["git", "commit", "-m", "echogit auto commit"],
                                 cwd=self.path, text=True, capture_output=True)
-
-    def _branch(self):
-        result = subprocess.run(["git", "branch"], cwd=self.path, text=True,
-                                capture_output=True)
 
     def _branch(self):
         result = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"],
