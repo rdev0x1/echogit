@@ -125,12 +125,15 @@ class ProjectWidget(urwid.WidgetWrap):
         log_overlay = urwid.Overlay(log_box, urwid.SolidFill(' '), align='center', width=('relative', 80),
                                     valign='middle', height=('relative', 80))
 
+        prev_handler = main_loop.unhandled_input
+        main_widget = main_loop.widget
+
         def exit_logs(key):
             if key in ('q', 'Q', 'esc'):
                 main_loop.widget = main_widget
-                main_loop.unhandled_input = None
+                main_loop.unhandled_input = prev_handler
+                return True
 
-        main_widget = main_loop.widget
         main_loop.widget = log_overlay
         main_loop.unhandled_input = exit_logs
 
@@ -184,7 +187,7 @@ def run_ui(folder):
     ]
 
     listbox = build_ui(node)
-    main_loop = urwid.MainLoop(listbox, palette)
+    main_loop = urwid.MainLoop(listbox, palette, unhandled_input=lambda key: None)
     main_loop.run()
 
 
