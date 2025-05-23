@@ -14,7 +14,7 @@ class RsyncRepositoryPeer(Node):
         Perform a bidirectional sync between self.path and rsync_path
         """
         rsync_options = ['-aur']
-        rsync_path = self.peer.get_remote_project_url(self.path)
+        rsync_path = self.peer.get_remote_project_url(self.path, sync_type="rsync")
 
         # Add verbose flag if requested
         if verbose:

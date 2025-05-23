@@ -124,7 +124,7 @@ class Peer:
         # Return None if no version string is found
         return None
 
-    def get_remote_project_url(self, path):
+    def get_remote_project_url(self, path, sync_type=None):
         """
         Return the ssh address of a project located at the path folder.
         This is used by git clone or git remote add.
@@ -144,7 +144,11 @@ class Peer:
         relative_project_path = os.path.relpath(path, data_path)
         project_base_path = os.path.join(self.config.git_path, relative_project_path)
 
-        sync_type = self._determine_sync_type(project_base_path)
+        if sync_type is None:
+            for candidate in ("git", "rsync"):
+                if self._repo_exists(f"{project_base_path}.{candidate}"):
+                    sync_type = candidate
+                    break
         if sync_type is None:
             raise ValueError(f"No .git or .rsync directory found for the project at {project_base_path}")
 
@@ -155,27 +159,46 @@ class Peer:
 
         return f"{project_base_path}.{sync_type}"
 
+    def ensure_remote_repo(self, project_path, sync_type):
+        """
+        Given a local project_path,
+        * figure out its bare‐repo URL
+        * test it with `git ls-remote`
+        * if it doesn’t exist, mkdir and init --bare
+        * return the URL
+        """
+        repo_url = self.get_remote_project_url(project_path, sync_type=sync_type)
+        if self._repo_exists(project_path):
+            return repo_url
+
+        # no such repo—create it
+        if self.is_localhost():
+            os.makedirs(repo_url, exist_ok=True)
+            subprocess.run(["git", "init", "--bare", repo_url], check=True)
+        else:
+            realpath = repo_url.split(":",2)[-1] # strip ssh://host://
+            self._execute_remote_command(
+                f"mkdir -p {realpath} && git init --bare {realpath}"
+            )
+
+        return repo_url
+
     def _fetch_config_if_needed(self):
         """Fetch config if it's not already loaded."""
         if self.config is None:
             self.fetch_config()
 
-    def _determine_sync_type(self, project_base_path):
+    def _repo_exists(self, project_base_path):
         """
-        Determine the sync type ('git' or 'rsync') by checking the folder's existence
-        locally or remotely depending on whether the peer is localhost.
+        check if local or remote repo exists
         """
         if self.is_localhost():
-            if os.path.isdir(f"{project_base_path}.git"):
-                return "git"
-            if os.path.isdir(f"{project_base_path}.rsync"):
-                return "rsync"
+            if os.path.isdir(project_base_path):
+                return True
         else:
-            if self._remote_directory_exists(f"{project_base_path}.git"):
-                return "git"
-            if self._remote_directory_exists(f"{project_base_path}.rsync"):
-                return "rsync"
-        return None
+            if self._remote_directory_exists(project_base_path):
+                return True
+        return False
 
     def _remote_directory_exists(self, ssh_directory_path):
         """Check if a directory exists on a remote peer via SSH."""

@@ -41,12 +41,15 @@ class SyncBranch(Node):
             stderr={result.stderr}")
 
     def _get_peer_url(self):
-        return self.peer.get_remote_project_url(self.path)
+        return self.peer.get_remote_project_url(self.path, sync_type="git")
 
     def _add_remote(self, verbose):
-        git_path = self._get_peer_url()
+        """
+            Add remote using git remote add then ensure the remote repo exists.
+        """
 
         # Get existing remotes
+        git_path = self._get_peer_url()
         result = subprocess.run(["git", "remote", "get-url", self.peer.name],
                                 cwd=self.path, text=True, capture_output=True)
         remote_url = result.stdout.strip()
@@ -70,6 +73,9 @@ class SyncBranch(Node):
                                     capture_output=True)
 
         self._save_result_logs("remote_add", result, verbose)
+
+        # ensure the remote path exists. And create it if needed.
+        self.peer.ensure_remote_repo(self.path, "git")
 
     def _push(self, verbose):
         branch = self.name
