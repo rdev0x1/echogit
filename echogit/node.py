@@ -26,6 +26,7 @@ class Node:
         self._log_lines: list[str] = []
         self._has_error: bool = False
         self.exists_locally: bool = self.path.exists()
+        self.remote_peers = []
 
         if config is not None:
             self.config = config

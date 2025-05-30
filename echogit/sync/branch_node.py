@@ -26,7 +26,7 @@ class BranchNode(Node):
         return self.parent.git_path
 
     def sync(self) -> bool:
-        remote = self.config.remote_name
+        remote = self.peer_name
 
         cmds = [
             # ["git", "-C", str(self.path), "merge", f"{self.peer_name}/{self.name}"],

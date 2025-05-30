@@ -7,7 +7,7 @@ import logging
 from pathlib import Path
 
 from echogit.config import Config
-from echogit.discovery import discover_local_projects
+from echogit.discovery import discover_local_projects, discover_remote_projects
 from echogit.node_factory import from_path
 
 
@@ -19,6 +19,7 @@ def main():
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     subparsers.add_parser("list", help="List local projects")
+    subparsers.add_parser("list-remote", help="List remote projects")
 
     sync_parser = subparsers.add_parser("sync", help="Sync local projects")
     sync_parser.add_argument("path", nargs="?", default=None)
@@ -32,7 +33,7 @@ def main():
     )
 
     args = parser.parse_args()
-    config = Config.load()
+    config = Config.load_from_file()
 
     if args.command != "sync" or args.verbose == 0:
         logging.basicConfig(level=logging.CRITICAL)
@@ -44,6 +45,12 @@ def main():
     if args.command == "list":
         for proj in discover_local_projects(config.projects_path):
             print(proj)
+
+    elif args.command == "list-remote":
+        for peer_name in config.peers:
+            print(f"Projects on peer '{peer_name}':")
+            for proj in discover_remote_projects(peer_name):
+                print(f"  - {proj}")
 
     elif args.command == "sync":
         path = Path(args.path or config.projects_path)

@@ -1,8 +1,12 @@
 from functools import cached_property
 from pathlib import Path
-from typing import Set
+from typing import Dict, Set
 
-from echogit.discovery import ProjectRef, discover_local_projects
+from echogit.discovery import (
+    ProjectRef,
+    discover_local_projects,
+    discover_remote_projects,
+)
 from echogit.node import Node
 from echogit.sync.git_sync import GitProjectNode
 
@@ -14,8 +18,9 @@ class FolderNode(Node):
       - Ordinary sub-folders       → FolderNode
     """
 
-    # cache local listing (once)
-    _local_cache: Set[Path] = set()
+    # cache remote listings (per peer) and local listing (once)
+    _remote_cache: Dict[str, Set[ProjectRef]] = {}
+    _local_cache: Set[ProjectRef] = set()
 
     def __init__(self, path: Path, **kwargs):
         super().__init__(path, **kwargs)
@@ -31,8 +36,9 @@ class FolderNode(Node):
 
     def scan(self) -> None:
         """
-        Populate just the immediate children of this folder with any project
-        worktree or bare-repo one level down under projects_path
+        Populate just the immediate children of this folder:
+         - Any project worktree or bare-repo one level down under projects_path
+         - Any repo one level down on any peer, marked as remote-only
         Caches the full local discovery on the first (root) call,
         and reuses it on recursive calls to avoid repeated disk scans.
         """
@@ -45,6 +51,8 @@ class FolderNode(Node):
         if self.parent is None:
             # discover all projects under data_root exactly once
             FolderNode._local_cache = set(discover_local_projects(data_root))
+            # reset remote cache
+            FolderNode._remote_cache.clear()
 
         local_all = FolderNode._local_cache
         # determine where we sit within the data tree
@@ -60,8 +68,26 @@ class FolderNode(Node):
             # take only the very next segment under this folder
             next_children.add(ProjectRef(rel=subtree_rel / tail, type=ref.type))
 
+        # collect remote‐only children
+        remote_children: Dict[ProjectRef, List[str]] = {}
+        for host in self.config.peers:
+            if host not in FolderNode._remote_cache:
+                FolderNode._remote_cache[host] = set(
+                    discover_remote_projects(self.config, host)
+                )
+            for ref in FolderNode._remote_cache[host]:
+                if not ref.rel.is_relative_to(subtree_rel):
+                    continue
+                tail = ref.rel.relative_to(subtree_rel).parts[0]
+                child_rel = ProjectRef(rel=subtree_rel / tail, type=ref.type)
+                if child_rel in next_children:
+                    continue
+                remote_children.setdefault(child_rel, []).append(host)
+
         # union of local refs and remote‐only refs
         all_children = {ref.rel: ref for ref in next_children}
+        for ref, _ in remote_children.items():
+            all_children.setdefault(ref.rel, ProjectRef(rel=ref.rel, type=ref.type))
 
         # Sort the relative paths so we can peek at the “next” item
         sorted_rels = sorted(all_children.keys())
@@ -83,5 +109,6 @@ class FolderNode(Node):
 
             node = NodeCls(path=abs_path, parent=self)
             node.exists_locally = abs_path.is_dir()
+            node.remote_peers = remote_children.get(ref, [])
             self.add_child(node)
             node.scan()

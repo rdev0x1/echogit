@@ -1,6 +1,13 @@
+"""
+parse a local or remote folder and find all available projects.
+"""
+
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, Set
+
+from echogit.config import Config
+from echogit.utils import run_ssh_command
 
 
 @dataclass(frozen=True)
@@ -43,7 +50,58 @@ def discover_local_projects(root: Path) -> Iterator[ProjectRef]:
     Yields ProjectRef for every bare‐repo or worktree under 'root'.
     rel is relative to 'root', type is only "git" for now.
     """
+    seen: Set[Path] = set()
     for pat, sync_type in _PATTERNS.items():
         for match in root.rglob(pat):
             ref = _normalize(match, sync_type)
-            yield ProjectRef(rel=ref.rel.relative_to(root), type=ref.type)
+            rel = ref.rel.relative_to(root)
+
+            # Skip nested projects
+            if any(parent in seen for parent in rel.parents):
+                continue
+
+            seen.add(rel)
+            yield ProjectRef(rel=rel, type=ref.type)
+
+
+def discover_remote_projects(peer: str) -> Iterator[ProjectRef]:
+    """
+    SSH into `peer`, fetch its config.ini for its data_root & bare_root,
+    then find the same patterns remotely. Yields ProjectRef(rel, type)
+    where rel is relative to each root.
+    """
+    # grab remote config.ini
+    rconfig = Config.get_config_peer(peer)
+    if rconfig is None:
+        return
+    data_root = rconfig.projects_path
+    bare_root = rconfig.git_path
+
+    def _ssh_find(path: Path) -> Iterator[ProjectRef]:
+        tests = " -o ".join(f'-name "{pat}"' for pat in _PATTERNS)
+        cmd = f"find {path} -type d \\( {tests} \\)"
+        success, out = run_ssh_command(peer, cmd)
+        if not success:
+            return
+
+        seen: Set[Path] = set()
+
+        for line in out.splitlines():
+            p = Path(line.strip())
+            # determine which pattern we matched by checking suffix or folder name
+            for pat, sync_type in _PATTERNS.items():
+                if p.match(pat):
+                    ref = _normalize(p, sync_type)
+                    rel = ref.rel.relative_to(path)
+
+                    # Skip nested projects
+                    if any(parent in seen for parent in rel.parents):
+                        break
+
+                    seen.add(rel)
+                    yield ProjectRef(rel=rel, type=ref.type)
+                    break
+
+    yield from _ssh_find(data_root)
+    if bare_root:
+        yield from _ssh_find(bare_root)

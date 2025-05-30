@@ -1,6 +1,7 @@
 from functools import cached_property
 from pathlib import Path
 
+from echogit.config import Config
 from echogit.node import Node
 from echogit.sync.branch_node import BranchNode
 from echogit.utils import safe_run_command
@@ -18,7 +19,11 @@ class PeerNode(Node):
 
     @cached_property
     def git_path(self) -> Path:
-        return self.parent.git_path
+        remote = self.name
+        rconfig = Config.get_config_peer(remote)
+        if rconfig is None or rconfig.git_path is None:
+            raise ValueError(f"Cannot fetch config for peer '{remote}'")
+        return rconfig.git_path / self.relative_path.with_suffix(".git")
 
     def get_icon(self) -> str:
         return "💻"
@@ -58,8 +63,9 @@ class PeerNode(Node):
         if not self.exists_locally:
             return True
 
-        remote = self.config.remote_name
-        desired_url = str(self.git_path)
+        remote = self.name
+        rconfig = Config.get_config_peer(remote)
+        desired_url = f"ssh://{remote}:{str(self.git_path)}"
         path = str(self.path)
 
         # Check if the remote already exists and what URL it has
