@@ -9,6 +9,7 @@ from echogit.config import Config
 from echogit.folder_node import FolderNode
 from echogit.node import Node
 from echogit.sync.git_sync import GitProjectNode
+from echogit.sync.rsync_sync import RsyncProjectNode
 
 
 def from_path(
@@ -21,6 +22,8 @@ def from_path(
     p = Path(path).resolve()
     if (p / ".git").is_dir() or p.suffix == ".git":
         cls = GitProjectNode
+    elif (p / ".rsync").is_dir() or p.suffix == ".rsync":
+        cls = RsyncProjectNode
     else:
         cls = FolderNode
 

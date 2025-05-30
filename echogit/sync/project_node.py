@@ -1,0 +1,33 @@
+from echogit.node import Node
+
+
+class ProjectNode(Node):
+    def get_icon(self) -> str:
+        return "📦" if self.exists_locally else "☁️"
+
+    def clone(self) -> bool:
+        """
+        Try cloning this project’s bare‐repo from each host in self.remote_peers.
+        Returns True on first success, False on overall failure.
+        Logs stdout/stderr in self.log and last error in self.error.
+        """
+        for peer_node in self.children:
+            success = peer_node.clone()
+            if success:
+                self.exists_locally = True
+                return True
+        return False
+
+    def _scan(self, cls) -> None:
+        self.children.clear()
+
+        config = self.config
+
+        for peer_name in config.peers:
+            # ▼ only instantiate peers that are both reachable and allowed for this path
+            if not config.is_path_allowed(peer_name, self.path):
+                continue
+
+            peer_node = cls(path=self.path, peer_name=peer_name, parent=self)
+            peer_node.scan()
+            self.add_child(peer_node)
