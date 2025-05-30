@@ -9,6 +9,7 @@ from pathlib import Path
 from echogit.config import Config
 from echogit.discovery import discover_local_projects, discover_remote_projects
 from echogit.node_factory import from_path
+from echogit.tui import run_ui
 
 
 def main():
@@ -31,6 +32,9 @@ def main():
         default=1,
         help="verbosity level: 0=critical, 1=error, 2=info",
     )
+
+    tui_parser = subparsers.add_parser("tui", help="Launch TUI interface")
+    tui_parser.add_argument("path", nargs="?", default=None)
 
     args = parser.parse_args()
     config = Config.load_from_file()
@@ -57,6 +61,10 @@ def main():
         root_node = from_path(path, config=config)
         root_node.scan()
         root_node.sync()
+
+    elif args.command == "tui":
+        path = Path(args.path or config.projects_path)
+        run_ui(path, config)
 
 
 if __name__ == "__main__":
