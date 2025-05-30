@@ -1,9 +1,10 @@
 from functools import cached_property
 from pathlib import Path
 
+from echogit.config import Config
 from echogit.node import Node
 from echogit.sync.peer_node import PeerNode
-from echogit.utils import safe_run_command
+from echogit.utils import run_ssh_command, safe_run_command
 
 
 class GitProjectNode(Node):
@@ -18,7 +19,7 @@ class GitProjectNode(Node):
 
     def clone(self) -> bool:
         """
-        Try cloning this project’s bare‐repo.
+        Try cloning this project’s bare‐repo from each host in self.remote_peers.
         Returns True on first success, False on overall failure.
         Logs stdout/stderr in self.log and last error in self.error.
         """
@@ -29,31 +30,41 @@ class GitProjectNode(Node):
         parent_dir = self.path.parent
         parent_dir.mkdir(parents=True, exist_ok=True)
 
-        #  determine bare‐repo root
-        bare_root = self.config.git_path
-        if bare_root:
-            remote_base = Path(bare_root).expanduser()
+        for host in self.remote_peers:
+            # fetch that host’s config.ini
+            success, cfg_txt = run_ssh_command(host, f"cat {Config.CONFIG_FILE}")
+            self.log(cfg_txt, not success)
+            if success is False:
+                continue
+            rconfig = Config.load_from_buffer(cfg_txt)
+            remote_base = rconfig.git_path
+
+            # determine remote bare‐repo root
             # append ".git" suffix on the path
             remote_repo = remote_base / f"{rel}.git"
-        else:
-            # fallback to their projects_path if they have no git_path
-            data_root = Path("~/echogit_git").expanduser()
-            remote_repo = data_root / rel
 
-        cmd = ["git", "clone", remote_repo, str(self.path)]
-        success, out = safe_run_command(cmd, cwd=str(parent_dir))
-        self.log(out, not success)
+            # build an SSH URL and clone
+            url = f"ssh://{host}:{remote_repo}"
+            cmd = ["git", "clone", url, str(self.path)]
+            success, out = safe_run_command(cmd, cwd=str(parent_dir))
+            self.log(out, not success)
 
-        if success:
-            self.exists_locally = True
-            return True
+            if success:
+                self.exists_locally = True
+                return True
 
-        # record this host’s failure
         return False
 
     def scan(self) -> None:
         self.children.clear()
 
-        peer_node = PeerNode(path=self.path, peer_name="localhost", parent=self)
-        peer_node.scan()
-        self.add_child(peer_node)
+        config = self.config
+
+        for peer_name in config.peers:
+            # ▼ only instantiate peers that are both reachable and allowed for this path
+            if not config.is_path_allowed(peer_name, self.path):
+                continue
+
+            peer_node = PeerNode(path=self.path, peer_name=peer_name, parent=self)
+            peer_node.scan()
+            self.add_child(peer_node)
