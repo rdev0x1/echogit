@@ -18,12 +18,16 @@ class Config:
         remote_name: str,
         peers: List[str],
         peer_allowed_paths: dict[str, List[Path]],
+        plugins: List[str],
+        plugin_dir: str,
     ):
         self.projects_path = projects_path.expanduser().resolve()
         self.git_path = git_path.expanduser().resolve() if git_path else None
         self.remote_name = remote_name
         self._all_peers = peers
         self.peer_allowed_paths = peer_allowed_paths
+        self.plugins = plugins
+        self.plugin_dir = plugin_dir
 
     @cached_property
     def peers(self) -> List[str]:
@@ -41,6 +45,12 @@ class Config:
         projects_path = Path(cfg.get("DEFAULT", "projects_path", fallback="~/echogit"))
         git_path = Path(cfg.get("DEFAULT", "git_path", fallback="~/echogit"))
         remote_name = cfg.get("DEFAULT", "remote_name", fallback="origin")
+        plugins = [
+            p.strip()
+            for p in cfg.get("DEFAULT", "plugins", fallback="").split(",")
+            if p.strip()
+        ]
+        plugin_dir = cfg.get("DEFAULT", "plugin_dir", fallback="~/echogit/plugins/")
         peers = [
             p.strip()
             for p in cfg.get("PEERS", "peers", fallback="").split(",")
@@ -64,6 +74,8 @@ class Config:
             remote_name=remote_name,
             peers=peers,
             peer_allowed_paths=peer_allowed_paths,
+            plugins=plugins,
+            plugin_dir=plugin_dir,
         )
 
     @classmethod
