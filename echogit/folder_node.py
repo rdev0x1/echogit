@@ -1,3 +1,8 @@
+"""
+FolderNode: scans directories for Git/Rsync projects or subfolders.
+Uses class-level caches to avoid redundant discovery.
+"""
+
 from functools import cached_property
 from pathlib import Path
 from typing import Dict, Set
@@ -9,18 +14,20 @@ from echogit.discovery import (
 )
 from echogit.node import Node
 from echogit.sync.git_sync import GitProjectNode
+from echogit.sync.rsync_sync import RsyncProjectNode
 
 
 class FolderNode(Node):
     """
     A container node that scans its directory for:
-      - Git project roots → ProjectNode
+      - Git or Rsync project roots → ProjectNode
       - Ordinary sub-folders       → FolderNode
     """
 
     # cache remote listings (per peer) and local listing (once)
     _remote_cache: Dict[str, Set[ProjectRef]] = {}
     _local_cache: Set[ProjectRef] = set()
+    node_by_relpath: Dict[Path, Node] = {}
 
     def __init__(self, path: Path, **kwargs):
         super().__init__(path, **kwargs)
@@ -28,87 +35,111 @@ class FolderNode(Node):
     @cached_property
     def is_folder(self) -> bool:
         # override Node.is_folder if you want to treat
-        # bare-repo dirs (.git) as non-folders here
+        # bare-repo dirs (.git, .rsync) as non-folders here
         return True
 
     def get_icon(self) -> str:
         return "📁" if self.collapse else "📂"
 
+    @cached_property
+    def git_path(self) -> Path:
+        """FolderNode does not implement git_path."""
+        raise NotImplementedError("FolderNode has no git_path")
+
     def scan(self) -> None:
-        """
-        Populate just the immediate children of this folder:
-         - Any project worktree or bare-repo one level down under projects_path
-         - Any repo one level down on any peer, marked as remote-only
-        Caches the full local discovery on the first (root) call,
-        and reuses it on recursive calls to avoid repeated disk scans.
-        """
-
         self.children.clear()
-        cfg = self.config
-        data_root = cfg.projects_path
 
-        # On the top-level call (parent is None), build the full local cache
-        if self.parent is None:
-            # discover all projects under data_root exactly once
-            FolderNode._local_cache = set(discover_local_projects(data_root))
-            # reset remote cache
-            FolderNode._remote_cache.clear()
+        # Critical Fix: Initialize root node by relative path
+        FolderNode.node_by_relpath[self.relative_path] = self
 
-        local_all = FolderNode._local_cache
-        # determine where we sit within the data tree
-        subtree_rel = self.path.relative_to(data_root)
+        # At root only, build local cache once
+        if self.parent is None and not FolderNode._local_cache:
+            FolderNode._local_cache = set(discover_local_projects(self.path))
 
-        # collect next‐level children from local projects
-        next_children: Set[ProjectRef] = set()
-        for ref in local_all:
-            if not ref.rel.is_relative_to(subtree_rel):
+        # Immediate local scan
+        for child in sorted(self.path.iterdir()):
+            if not child.is_dir() or child.name in {".git", ".rsync", ".echogit"}:
                 continue
 
-            tail = ref.rel.relative_to(subtree_rel).parts[0]
-            # take only the very next segment under this folder
-            next_children.add(ProjectRef(rel=subtree_rel / tail, type=ref.type))
-
-        # collect remote‐only children
-        remote_children: Dict[ProjectRef, List[str]] = {}
-        for host in self.config.peers:
-            if host not in FolderNode._remote_cache:
-                FolderNode._remote_cache[host] = set(
-                    discover_remote_projects(self.config, host)
-                )
-            for ref in FolderNode._remote_cache[host]:
-                if not ref.rel.is_relative_to(subtree_rel):
-                    continue
-                tail = ref.rel.relative_to(subtree_rel).parts[0]
-                child_rel = ProjectRef(rel=subtree_rel / tail, type=ref.type)
-                if child_rel in next_children:
-                    continue
-                remote_children.setdefault(child_rel, []).append(host)
-
-        # union of local refs and remote‐only refs
-        all_children = {ref.rel: ref for ref in next_children}
-        for ref, _ in remote_children.items():
-            all_children.setdefault(ref.rel, ProjectRef(rel=ref.rel, type=ref.type))
-
-        # Sort the relative paths so we can peek at the “next” item
-        sorted_rels = sorted(all_children.keys())
-
-        # instantiate nodes for each next-level path
-        for idx, rel in enumerate(sorted_rels):
-            ref = all_children[rel]
-            abs_path = data_root / rel
-
-            # Peek at the next relative path (if any) to determine “has_deeper”
-            next_rel = sorted_rels[idx + 1] if (idx + 1) < len(sorted_rels) else None
-            # if any other child lies under this rel, treat as an intermediate folder
-            has_deeper = next_rel is not None and next_rel.is_relative_to(rel)
-
-            if has_deeper:
-                NodeCls = FolderNode
+            if (child / ".git").is_dir() or child.suffix == ".git":
+                node = GitProjectNode(path=child, parent=self)
+            elif (child / ".rsync").is_dir() or child.suffix == ".rsync":
+                node = RsyncProjectNode(path=child, parent=self)
             else:
-                NodeCls = GitProjectNode
+                node = FolderNode(path=child, parent=self)
 
-            node = NodeCls(path=abs_path, parent=self)
-            node.exists_locally = abs_path.is_dir()
-            node.remote_peers = remote_children.get(ref, [])
+            node.exists_locally = True
             self.add_child(node)
             node.scan()
+            FolderNode.node_by_relpath[node.relative_path] = node
+
+        # Discover missing projects from caches
+        if self.parent is None:
+            self._add_missing_projects_from_cache(self.relative_path)
+
+    def _add_missing_projects_from_cache(self, data_root: Path) -> None:
+        all_refs: Set[ProjectRef] = set(FolderNode._local_cache)
+
+        # Fetch remote project refs, caching per peer
+        for peer in self.config.peers:
+            if peer not in FolderNode._remote_cache:
+                FolderNode._remote_cache[peer] = set(discover_remote_projects(peer))
+            all_refs.update(FolderNode._remote_cache[peer])
+
+        for ref in all_refs:
+
+            if ref.rel in FolderNode.node_by_relpath:
+                continue  # Already exists locally
+
+            # process only suboflders of data_root
+            if not ref.rel.is_relative_to(data_root):
+                continue
+
+            # Recursively ensure parent folders exist
+            ret = self._ensure_parents(ref.rel.parent, data_root)
+            if ret is False:
+                continue
+
+            parent_node = FolderNode.node_by_relpath[ref.rel.parent]
+            abs_path = (self.config.projects_path / ref.rel).resolve()
+
+            if ref.type == "git":
+                node = GitProjectNode(path=abs_path, parent=parent_node)
+            elif ref.type == "rsync":
+                node = RsyncProjectNode(path=abs_path, parent=parent_node)
+            else:
+                continue  # Skip unknown type
+
+            node.exists_locally = abs_path.is_dir()
+            parent_node.add_child(node)
+            node.scan()
+            FolderNode.node_by_relpath[ref.rel] = node
+
+    def _ensure_parents(self, rel_path: Path, data_root: Path) -> bool:
+        """
+        Recursively create intermediate FolderNode entries for missing parents.
+        this is how we can add remote projects available from peer that we can clone.
+        """
+
+        if rel_path == Path(".") or rel_path in FolderNode.node_by_relpath:
+            return True
+
+        ret = self._ensure_parents(rel_path.parent, data_root)
+        if ret is False:
+            return False
+
+        parent_node = FolderNode.node_by_relpath[rel_path.parent]
+
+        # Only create childs node under folder node. We dont want childs under
+        # projects node.
+        if not parent_node.is_folder:
+            return False
+
+        abs_path = (self.config.projects_path / rel_path).resolve()
+        abs_path = rel_path.resolve()
+
+        node = FolderNode(path=abs_path, parent=parent_node)
+        node.exists_locally = abs_path.is_dir()
+        parent_node.add_child(node)
+        FolderNode.node_by_relpath[rel_path] = node
+        return True

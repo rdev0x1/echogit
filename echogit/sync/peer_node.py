@@ -1,98 +1,50 @@
-from functools import cached_property
 from pathlib import Path
 
 from echogit.config import Config
 from echogit.node import Node
-from echogit.sync.branch_node import BranchNode
-from echogit.utils import safe_run_command
+from echogit.utils import run_ssh_command, safe_run_command
 
 
 class PeerNode(Node):
-    """
-    Represents one remote peer under a Git project.
-    We’ll list all remote branches and make one BranchNode each.
-    """
-
     def __init__(self, path: Path, peer_name: str, **kwargs):
         super().__init__(path, **kwargs)
         self.name = peer_name
 
-    @cached_property
-    def git_path(self) -> Path:
-        remote = self.name
-        rconfig = Config.get_config_peer(remote)
-        if rconfig is None or rconfig.git_path is None:
-            raise ValueError(f"Cannot fetch config for peer '{remote}'")
-        return rconfig.git_path / self.relative_path.with_suffix(".git")
-
     def get_icon(self) -> str:
         return "💻"
 
-    def scan(self) -> None:
-        self.children.clear()
-        for branch in self._fetch_remote_branches():
-            child = BranchNode(
-                path=self.path,
-                branch_name=branch,
-                parent=self,
-            )
-            self.add_child(child)
+    def get_clone_command(self, rel: Path, remote_base: Path):
+        raise NotImplementedError(
+            "get_clone_command()  must be implemented by subclasses"
+        )
 
-    def _fetch_remote_branches(self) -> list[str]:
+    def clone(self) -> bool:
+        """
+        Try cloning this project’s bare‐repo from each host in self.remote_peers.
+        Returns True on first success, False on overall failure.
+        Logs stdout/stderr in self.log and last error in self.error.
+        """
+        # the relative path under projects_path (e.g. "foo/bar")
+        rel = self.relative_path
 
-        cmd = ["git", "-C", str(self.path), "branch"]
+        # make sure parent dir exists
+        parent_dir = self.path.parent
+        parent_dir.mkdir(parents=True, exist_ok=True)
 
-        success, out = safe_run_command(cmd)
+        host = self.name
+
+        # fetch that host’s config.ini
+        success, cfg_txt = run_ssh_command(host, f"cat {Config.CONFIG_FILE}")
+        self.log(cfg_txt, not success)
+        if success is False:
+            return False
+
+        rconfig = Config.load_from_buffer(cfg_txt)
+        remote_base = rconfig.git_path
+
+        cmd = self.get_clone_command(rel, remote_base)
+
+        success, out = safe_run_command(cmd, cwd=str(parent_dir))
         self.log(out, not success)
 
-        if not success:
-            return []
-
-        # Parse branch names from stdout
-        branches: list[str] = []
-        for line in out.splitlines():
-            name = line.strip().lstrip("* ").strip()
-            if name:
-                branches.append(name)
-
-        return branches
-
-    def sync(self) -> bool:
-
-        # If this project is not cloned, then there is nothing to sync
-        if not self.exists_locally:
-            return True
-
-        remote = self.name
-        rconfig = Config.get_config_peer(remote)
-        desired_url = f"ssh://{remote}:{str(self.git_path)}"
-        path = str(self.path)
-
-        # Check if the remote already exists and what URL it has
-        success, existing_url = safe_run_command(
-            ["git", "-C", str(self.path), "remote", "get-url", remote]
-        )
-        self.log(existing_url, not success)
-
-        cmds_to_run: list[list[str]] = []
-
-        if success:
-            existing_url = existing_url.strip()
-            if existing_url != desired_url:
-                _cmd = ["git", "-C", path, "remote", "set-url", remote, desired_url]
-                cmds_to_run.append(_cmd)
-        else:
-            # `get-url` failed → remote probably doesn't exist. Add it.
-            cmds_to_run.append(
-                ["git", "-C", str(self.path), "remote", "add", remote, desired_url]
-            )
-
-        cmds_to_run.append(["git", "-C", path, "fetch", remote])
-
-        for cmd in cmds_to_run:
-            success, out = safe_run_command(cmd, cwd=path)
-            self.log(out, not success)
-            if not success:
-                return False
-
-        return super().sync()
+        return success

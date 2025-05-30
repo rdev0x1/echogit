@@ -13,8 +13,8 @@ from echogit.utils import run_ssh_command
 @dataclass(frozen=True)
 class ProjectRef:
     """
-    rel   : Path under the peer's projects_path
-    type  : always "git" for now
+    rel   : Path under the peer’s projects_path
+    type  : "git" or "rsync"
     """
 
     rel: Path
@@ -25,20 +25,22 @@ class ProjectRef:
 _PATTERNS = {
     "*.git": "git",
     ".git": "git",
+    "*.rsync": "rsync",
+    ".rsync": "rsync",
 }
 
 
 def _normalize(p: Path, sync_type: str) -> ProjectRef:
     """
     Convert a Path match into (relpath, sync_type).
-    - Step up if we matched the inner .git folder
+    - Step up if we matched the inner .git/.rsync folder
     - Strip the suffix (bare repo) if present
     """
     # if we matched the metadata dir itself, go up
-    repo = p.parent if p.name is ".git" else p
+    repo = p.parent if p.name in (".git", ".rsync") else p
 
     # strip the suffix from the folder name if it's bare
-    if repo.suffix is ".git":
+    if repo.suffix in (".git", ".rsync"):
         repo = repo.with_suffix("")
 
     # compute relpath under its root
@@ -48,7 +50,7 @@ def _normalize(p: Path, sync_type: str) -> ProjectRef:
 def discover_local_projects(root: Path) -> Iterator[ProjectRef]:
     """
     Yields ProjectRef for every bare‐repo or worktree under 'root'.
-    rel is relative to 'root', type is only "git" for now.
+    rel is relative to `root`, type is "git" or "rsync".
     """
     seen: Set[Path] = set()
     for pat, sync_type in _PATTERNS.items():
