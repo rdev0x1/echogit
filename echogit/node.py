@@ -23,6 +23,8 @@ class Node:
         self.name: str = self.path.name
         self.parent: Node | None = parent
         self.children: List[Node] = []
+        self._log_lines: list[str] = []
+        self._has_error: bool = False
         self.exists_locally: bool = self.path.exists()
 
         if config is not None:
@@ -36,6 +38,9 @@ class Node:
     def is_folder(self) -> bool:
         return False
 
+    def get_icon(self) -> str:
+        return "❓"
+
     def add_child(self, child: Node) -> None:
         child.parent = self
         self.children.append(child)
@@ -45,6 +50,21 @@ class Node:
         Default scan method. Folder-type nodes override this.
         """
         self.children.clear()
+
+    def get_logs(self) -> str:
+        return "\n".join(self._log_lines)
+
+    def log(self, msg: str, error: bool = False) -> None:
+        """Append a non‐error log line."""
+        level = "ERROR" if error else "INFO"
+        self._log_lines.append(f"{level}: {msg}")
+        if error:
+            self._has_error = True
+
+    def has_error(self) -> bool:
+        if self._has_error:
+            return True
+        return any(child.has_error() for child in self.children)
 
     def sync(self) -> bool:
         success = True

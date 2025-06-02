@@ -13,6 +13,9 @@ class GitProjectNode(Node):
         rel = self.relative_path
         return (self.config.git_path / rel).with_suffix(".git")
 
+    def get_icon(self) -> str:
+        return "📦" if self.exists_locally else "☁️"
+
     def clone(self) -> bool:
         """
         Try cloning this project’s bare‐repo.
@@ -38,7 +41,8 @@ class GitProjectNode(Node):
             remote_repo = data_root / rel
 
         cmd = ["git", "clone", remote_repo, str(self.path)]
-        success, _ = safe_run_command(cmd, cwd=str(parent_dir))
+        success, out = safe_run_command(cmd, cwd=str(parent_dir))
+        self.log(out, not success)
 
         if success:
             self.exists_locally = True

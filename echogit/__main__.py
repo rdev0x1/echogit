@@ -3,6 +3,7 @@ entry point for Echogit, a program that help you sync your projects using git or
 """
 
 import argparse
+import logging
 from pathlib import Path
 
 from echogit.config import Config
@@ -21,9 +22,24 @@ def main():
 
     sync_parser = subparsers.add_parser("sync", help="Sync local projects")
     sync_parser.add_argument("path", nargs="?", default=None)
+    sync_parser.add_argument(
+        "--verbose",
+        "-v",
+        type=int,
+        choices=[0, 1, 2],
+        default=1,
+        help="verbosity level: 0=critical, 1=error, 2=info",
+    )
 
     args = parser.parse_args()
     config = Config.load()
+
+    if args.command != "sync" or args.verbose == 0:
+        logging.basicConfig(level=logging.CRITICAL)
+    elif args.verbose == 1:
+        logging.basicConfig(level=logging.ERROR)
+    elif args.verbose >= 2:
+        logging.basicConfig(level=logging.INFO)
 
     if args.command == "list":
         for proj in discover_local_projects(config.projects_path):

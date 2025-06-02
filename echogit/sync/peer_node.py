@@ -20,6 +20,9 @@ class PeerNode(Node):
     def git_path(self) -> Path:
         return self.parent.git_path
 
+    def get_icon(self) -> str:
+        return "💻"
+
     def scan(self) -> None:
         self.children.clear()
         for branch in self._fetch_remote_branches():
@@ -35,6 +38,7 @@ class PeerNode(Node):
         cmd = ["git", "-C", str(self.path), "branch"]
 
         success, out = safe_run_command(cmd)
+        self.log(out, not success)
 
         if not success:
             return []
@@ -62,6 +66,7 @@ class PeerNode(Node):
         success, existing_url = safe_run_command(
             ["git", "-C", str(self.path), "remote", "get-url", remote]
         )
+        self.log(existing_url, not success)
 
         cmds_to_run: list[list[str]] = []
 
@@ -79,8 +84,9 @@ class PeerNode(Node):
         cmds_to_run.append(["git", "-C", path, "fetch", remote])
 
         for cmd in cmds_to_run:
-            ok, _ = safe_run_command(cmd, cwd=path)
-            if not ok:
+            success, out = safe_run_command(cmd, cwd=path)
+            self.log(out, not success)
+            if not success:
                 return False
 
         return super().sync()

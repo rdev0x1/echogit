@@ -15,6 +15,9 @@ class BranchNode(Node):
         self.name = branch_name
         self.peer_name = parent.name
 
+    def get_icon(self) -> str:
+        return "🌿"
+
     def scan(self):
         self.children.clear()
 
@@ -31,8 +34,9 @@ class BranchNode(Node):
         ]
 
         for cmd in cmds:
-            ok, _ = safe_run_command(cmd, cwd=str(self.path))
-            if not ok:
+            success, out = safe_run_command(cmd, cwd=str(self.path))
+            self.log(out, not success)
+            if not success:
                 return False
 
         return True

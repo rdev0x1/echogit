@@ -26,6 +26,9 @@ class FolderNode(Node):
         # bare-repo dirs (.git) as non-folders here
         return True
 
+    def get_icon(self) -> str:
+        return "📁" if self.collapse else "📂"
+
     def scan(self) -> None:
         """
         Populate just the immediate children of this folder with any project
