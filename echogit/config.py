@@ -1,3 +1,9 @@
+"""
+Configuration loader for Echogit.
+
+Handles projects_path, git_path, peers, plugins, and allowed_paths.
+"""
+
 import configparser
 from functools import cached_property
 from io import StringIO
@@ -8,9 +14,23 @@ from echogit.utils import is_peer_reachable
 
 
 class Config:
+    """
+    Holds Echogit configuration loaded from file or buffer.
+
+    Attributes:
+        projects_path: root folder for local projects
+        git_path: base folder for bare Git repos
+        remote_name: remote label (e.g. "origin")
+        peers: list of peer hostnames
+        peer_allowed_paths: mapping of peer→allowed subpaths
+        plugins: list of plugin names
+        plugin_dir: path to plugin directory
+    """
+
     CONFIG_FILE = Path.home() / ".config" / "echogit" / "config.ini"
 
     # git_path can be None to support low memory device like smartphone
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
     def __init__(
         self,
         projects_path: Path,
@@ -42,6 +62,9 @@ class Config:
 
     @classmethod
     def _load(cls, cfg: configparser.ConfigParser) -> "Config":
+        """
+        Parse a ConfigParser into a Config instance.
+        """
         projects_path = Path(cfg.get("DEFAULT", "projects_path", fallback="~/echogit"))
         git_path = Path(cfg.get("DEFAULT", "git_path", fallback="~/echogit"))
         remote_name = cfg.get("DEFAULT", "remote_name", fallback="origin")
@@ -80,6 +103,9 @@ class Config:
 
     @classmethod
     def load_from_file(cls, path: Path = CONFIG_FILE) -> "Config":
+        """
+        Load configuration from an .ini file on disk.
+        """
         path = path.expanduser()
         cfg = configparser.ConfigParser()
         cfg.read(path)
@@ -88,6 +114,12 @@ class Config:
 
     @classmethod
     def load_from_buffer(cls, config_string: str) -> "Config":
+        """
+        Load configuration from a string buffer.
+
+        :param config_string: INI-formatted text
+        :returns: Config instance
+        """
         cfg = configparser.ConfigParser()
         config_buffer = StringIO(config_string)
         cfg.read_file(config_buffer)
@@ -95,6 +127,9 @@ class Config:
         return Config._load(cfg)
 
     def is_path_allowed(self, peer_name: str, path: Path) -> bool:
+        """
+        return True if path can be synced with peer_name
+        """
         allowed_paths = self.peer_allowed_paths.get(peer_name)
         if not allowed_paths:
             return True  # If no rules, everything allowed
