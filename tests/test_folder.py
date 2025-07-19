@@ -1,6 +1,8 @@
 import os
 import unittest
-from echogit.sync_folder import SyncFolder
+from pathlib import Path
+
+from echogit.folder_node import FolderNode
 from echogit.config import Config
 
 
@@ -10,14 +12,13 @@ class TestSyncFolder(unittest.TestCase):
     def setUpClass(cls):
         test_path = os.path.dirname(os.path.realpath(__file__))
         test_path = os.path.join(test_path, "../test_dir/config/config_test.ini")
-        Config.reset_local_instance()
-        cls.config = Config(test_path)
+        cls.config = Config.load_from_file(Path(test_path))
 
     def setUp(self):
-        self.folder = SyncFolder(path=self.config.projects_path)
+        self.folder = FolderNode(path=self.config.projects_path, config=self.config)
 
     def test_is_folder(self):
-        self.assertTrue(self.folder.is_folder())
+        self.assertTrue(self.folder.is_folder)
 
     def test_scan(self):
         self.folder.scan()

@@ -21,6 +21,10 @@ class ProjectNode(Node):
     def _scan(self, cls) -> None:
         self.children.clear()
 
+        # Remote project: nothing to do until the user decide to clone it
+        if self.exists_locally is False:
+            return
+
         config = self.config
 
         for peer_name in config.peers:

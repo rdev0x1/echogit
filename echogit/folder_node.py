@@ -29,6 +29,9 @@ class FolderNode(Node):
     _local_cache: Set[ProjectRef] = set()
     node_by_relpath: Dict[Path, Node] = {}
 
+    # marker file to skip a folder subtree
+    SKIP_MARKER = ".echogitskip"
+
     def __init__(self, path: Path, **kwargs):
         super().__init__(path, **kwargs)
 
@@ -49,8 +52,15 @@ class FolderNode(Node):
     def scan(self) -> None:
         self.children.clear()
 
-        # Critical Fix: Initialize root node by relative path
-        FolderNode.node_by_relpath[self.relative_path] = self
+        # Skip whole subtree if marker file present
+        if (self.path / self.SKIP_MARKER).exists():
+            return
+
+        # Index this folder only if it’s inside an allowed root
+        rel_self = self._rel_from_roots(self.path)
+        if rel_self is None:
+            return
+        FolderNode.node_by_relpath[rel_self] = self
 
         # At root only, build local cache once
         if self.parent is None and not FolderNode._local_cache:
@@ -61,21 +71,39 @@ class FolderNode(Node):
             if not child.is_dir() or child.name in {".git", ".rsync", ".echogit"}:
                 continue
 
-            if (child / ".git").is_dir() or child.suffix == ".git":
-                node = GitProjectNode(path=child, parent=self)
-            elif (child / ".rsync").is_dir() or child.suffix == ".rsync":
-                node = RsyncProjectNode(path=child, parent=self)
+            # Resolve symlinks once, but prevent escaping our roots
+            target = child.resolve()
+            child_rel = self._rel_from_roots(target)
+            if child_rel is None:
+                continue
+
+            # Skip child subtree if marker file present
+            if (target / self.SKIP_MARKER).exists():
+                continue
+
+            # Prevent cycles and duplicate traversal
+            # same logical directory already indexed
+            if child_rel in FolderNode.node_by_relpath:
+                continue
+            # symlink points to this folder or any ancestor -> cycle
+            if self._is_ancestor_path(target):
+                continue
+
+            if (target / ".git").is_dir() or target.suffix == ".git":
+                node = GitProjectNode(path=target, parent=self)
+            elif (target / ".rsync").is_dir() or target.suffix == ".rsync":
+                node = RsyncProjectNode(path=target, parent=self)
             else:
-                node = FolderNode(path=child, parent=self)
+                node = FolderNode(path=target, parent=self)
 
             node.exists_locally = True
             self.add_child(node)
             node.scan()
-            FolderNode.node_by_relpath[node.relative_path] = node
+            FolderNode.node_by_relpath[child_rel] = node
 
         # Discover missing projects from caches
         if self.parent is None:
-            self._add_missing_projects_from_cache(self.relative_path)
+            self._add_missing_projects_from_cache(rel_self)
 
     def _add_missing_projects_from_cache(self, data_root: Path) -> None:
         all_refs: Set[ProjectRef] = set(FolderNode._local_cache)
@@ -115,6 +143,31 @@ class FolderNode(Node):
             node.scan()
             FolderNode.node_by_relpath[ref.rel] = node
 
+    def _rel_from_roots(self, p: Path) -> Path | None:
+        """
+        Return p relative to projects_path or git_path; None if it escapes both.
+        """
+        pr = p.resolve()
+        try:
+            return pr.relative_to(self.config.projects_path)
+        except ValueError:
+            if self.config.git_path:
+                try:
+                    return pr.relative_to(self.config.git_path)
+                except ValueError:
+                    pass
+        return None
+
+    def _is_ancestor_path(self, p: Path) -> bool:
+        """Return True if resolved path p is this node or any ancestor."""
+        rp = p.resolve()
+        cur = self
+        while cur is not None:
+            if cur.path.resolve() == rp:
+                return True
+            cur = cur.parent
+        return False
+
     def _ensure_parents(self, rel_path: Path, data_root: Path) -> bool:
         """
         Recursively create intermediate FolderNode entries for missing parents.
@@ -136,7 +189,6 @@ class FolderNode(Node):
             return False
 
         abs_path = (self.config.projects_path / rel_path).resolve()
-        abs_path = rel_path.resolve()
 
         node = FolderNode(path=abs_path, parent=parent_node)
         node.exists_locally = abs_path.is_dir()

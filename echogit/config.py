@@ -5,6 +5,7 @@ Handles projects_path, git_path, peers, plugins, and allowed_paths.
 """
 
 import configparser
+import os
 from functools import cached_property
 from io import StringIO
 from pathlib import Path
@@ -26,7 +27,7 @@ class Config:
         plugin_dir: path to plugin directory
     """
 
-    CONFIG_FILE = Path.home() / ".config" / "echogit" / "config.ini"
+    CONFIG_FILE = "$HOME/.config/echogit/config.ini"
     config_peers = {}
 
     # git_path can be None to support low memory device like smartphone
@@ -126,14 +127,18 @@ class Config:
         )
 
     @classmethod
-    def load_from_file(cls, path: Path = CONFIG_FILE) -> "Config":
+    def load_from_file(cls, path: Path | None = None) -> "Config":
         """
         Load configuration from an .ini file on disk.
         """
-        path = path.expanduser()
+        if path is None:
+            # expand $HOME locally
+            path = Path(os.path.expandvars(cls.CONFIG_FILE)).expanduser()
+        else:
+            path = path.expanduser()
+
         cfg = configparser.ConfigParser()
         cfg.read(path)
-
         return Config._load(cfg)
 
     @classmethod
