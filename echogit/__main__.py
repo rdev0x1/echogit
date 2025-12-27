@@ -3,17 +3,13 @@ entry point for Echogit, a program that help you sync your projects using git or
 """
 
 import argparse
-import json
 import logging
 import sys
 from pathlib import Path
-import configparser
-import os
 
 from echogit.config import Config
 from echogit.discovery import discover_local_projects, discover_remote_projects
 from echogit.node_factory import from_path
-from echogit.sync.project_node import ProjectNode
 from echogit.tui import run_ui
 
 
@@ -24,18 +20,8 @@ def main():
     parser = argparse.ArgumentParser(description="Echogit CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    list_parser = subparsers.add_parser("list", help="List local projects")
-    list_parser.add_argument(
-        "--json",
-        action="store_true",
-        help="print projects as JSON",
-    )
-    list_remote_parser = subparsers.add_parser("list-remote", help="List remote projects")
-    list_remote_parser.add_argument(
-        "--json",
-        action="store_true",
-        help="print projects as JSON",
-    )
+    subparsers.add_parser("list", help="List local projects")
+    subparsers.add_parser("list-remote", help="List remote projects")
 
     sync_parser = subparsers.add_parser("sync", help="Sync local projects")
     sync_parser.add_argument("path", nargs="?", default=None)
@@ -58,22 +44,6 @@ def main():
         help="include dirty status in progress output",
     )
 
-    config_parser = subparsers.add_parser("config", help="Get/set configuration")
-    config_parser.add_argument("path", nargs="?", default=None)
-    config_parser.add_argument(
-        "-g",
-        "--get",
-        action="store_true",
-        help="print configuration values",
-    )
-    config_parser.add_argument(
-        "-s",
-        "--set",
-        dest="set_values",
-        default=None,
-        help="set values (key:value, key=value)",
-    )
-
     tui_parser = subparsers.add_parser("tui", help="Launch TUI interface")
     tui_parser.add_argument("path", nargs="?", default=None)
 
@@ -89,13 +59,40 @@ def main():
     _enable_color_logging()
 
     if args.command == "list":
-        _handle_list(config, args.json)
+        for proj in discover_local_projects(config.projects_path):
+            print(proj)
+
     elif args.command == "list-remote":
-        _handle_list_remote(config, args.json)
+        for peer_name in config.peers:
+            print(f"Projects on peer '{peer_name}':")
+            for proj in discover_remote_projects(peer_name):
+                print(f"  - {proj}")
+
     elif args.command == "sync":
-        _handle_sync(config, args.path, args.progress, args.status)
-    elif args.command == "config":
-        _handle_config(config, args.path, args.get, args.set_values)
+        path = Path(args.path or config.projects_path)
+        root_node = from_path(path, config=config)
+        root_node.scan()
+        if args.progress:
+            from echogit.sync.project_node import ProjectNode
+
+            def on_progress(node, ok):
+                if isinstance(node, ProjectNode):
+                    if args.status and node.is_dirty():
+                        status = "DIRTY"
+                    else:
+                        status = "OK" if ok else "ERR"
+                    line = f"{status} {node.relative_path}"
+                    print(_color_status(status, line))
+
+            success = root_node.sync(on_progress=on_progress)
+        else:
+            success = root_node.sync()
+        if success:
+            print("Sync OK")
+        else:
+            print("Sync failed")
+            sys.exit(1)
+
     elif args.command == "tui":
         path = Path(args.path or config.projects_path)
         run_ui(path, config)
@@ -140,167 +137,6 @@ class _ColorFormatter(logging.Formatter):
         if not color:
             return msg
         return f"{color}{msg}\x1b[0m"
-
-
-def _handle_list(config: Config, as_json: bool) -> None:
-    projects = [
-        {"rel": str(proj.rel), "type": proj.type}
-        for proj in discover_local_projects(config.projects_path)
-    ]
-    if as_json:
-        print(json.dumps(projects))
-    else:
-        for proj in projects:
-            print(f"{proj['rel']} ({proj['type']})")
-
-
-def _handle_list_remote(config: Config, as_json: bool) -> None:
-    remote = {
-        peer_name: [
-            {"rel": str(proj.rel), "type": proj.type}
-            for proj in discover_remote_projects(peer_name)
-        ]
-        for peer_name in config.peers
-    }
-    if as_json:
-        print(json.dumps(remote))
-    else:
-        for peer_name, projects in remote.items():
-            print(f"Projects on peer '{peer_name}':")
-            for proj in projects:
-                print(f"  - {proj['rel']} ({proj['type']})")
-
-
-def _handle_sync(
-    config: Config, path: str | None, show_progress: bool, show_status: bool
-) -> None:
-    root = Path(path or config.projects_path)
-    root_node = from_path(root, config=config)
-    root_node.scan()
-    if show_progress:
-        def on_progress(node, ok):
-            if isinstance(node, ProjectNode):
-                if show_status and node.is_dirty():
-                    status = "DIRTY"
-                else:
-                    status = "OK" if ok else "ERR"
-                line = f"{status} {node.relative_path}"
-                print(_color_status(status, line))
-
-        success = root_node.sync(on_progress=on_progress)
-    else:
-        success = root_node.sync()
-    if success:
-        print("Sync OK")
-    else:
-        print("Sync failed")
-        sys.exit(1)
-
-
-def _handle_config(
-    config: Config, path: str | None, do_get: bool, set_values: str | None
-) -> None:
-    if not do_get and not set_values:
-        print("config: use -g or -s")
-        sys.exit(2)
-    if path:
-        _handle_project_config(config, path, do_get, set_values)
-    else:
-        _handle_global_config(do_get, set_values)
-
-
-def _parse_kv_list(raw: str) -> dict[str, str]:
-    pairs = {}
-    for part in raw.split(","):
-        item = part.strip()
-        if not item:
-            continue
-        if ":" in item:
-            key, val = item.split(":", 1)
-        elif "=" in item:
-            key, val = item.split("=", 1)
-        else:
-            continue
-        pairs[key.strip()] = val.strip()
-    return pairs
-
-
-def _load_ini(path: Path) -> configparser.ConfigParser:
-    cfg = configparser.ConfigParser()
-    if path.exists():
-        cfg.read(path)
-    return cfg
-
-
-def _write_ini(path: Path, cfg: configparser.ConfigParser) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as f:
-        cfg.write(f)
-
-
-def _handle_global_config(do_get: bool, set_values: str | None) -> None:
-    cfg_path = Path(os.path.expandvars(Config.CONFIG_FILE)).expanduser()
-    cfg = _load_ini(cfg_path)
-
-    if do_get:
-        projects_path = cfg.get("DEFAULT", "projects_path", fallback="")
-        ignore_peers_down = cfg.getboolean(
-            "DEFAULT", "ignore_peers_down", fallback=False
-        )
-        print(f"Data Path: {projects_path}")
-        print(f"Ignore peers down: {ignore_peers_down}")
-
-    if set_values:
-        values = _parse_kv_list(set_values)
-        if "projects_path" in values:
-            cfg.setdefault("DEFAULT", {})
-            cfg["DEFAULT"]["projects_path"] = values["projects_path"]
-        if "ignore_peers_down" in values:
-            cfg.setdefault("DEFAULT", {})
-            cfg["DEFAULT"]["ignore_peers_down"] = values["ignore_peers_down"]
-        _write_ini(cfg_path, cfg)
-
-
-def _handle_project_config(
-    config: Config, path: str, do_get: bool, set_values: str | None
-) -> None:
-    project_path = Path(path).expanduser().resolve()
-    try:
-        rel = project_path.relative_to(config.projects_path)
-    except ValueError:
-        rel = project_path
-
-    cfg_path = Path(os.path.expandvars(Config.CONFIG_FILE)).expanduser()
-    cfg = _load_ini(cfg_path)
-
-    if do_get:
-        section = cfg.get("AUTOCOMMIT", "projects", fallback="")
-        entries = {
-            Path(p.strip())
-            for p in section.replace(",", "\n").splitlines()
-            if p.strip()
-        }
-        auto_commit = rel in entries
-        print(f"Auto commit: {auto_commit}")
-
-    if set_values:
-        values = _parse_kv_list(set_values)
-        auto_commit_raw = values.get("autoCommit") or values.get("auto_commit")
-        if auto_commit_raw is not None:
-            auto_commit = auto_commit_raw.lower() in {"1", "true", "yes", "on"}
-            section = cfg.setdefault("AUTOCOMMIT", {})
-            current = section.get("projects", "")
-            entries = {
-                Path(p.strip())
-                for p in current.replace(",", "\n").splitlines()
-                if p.strip()
-            }
-            if auto_commit:
-                entries.add(rel)
-            else:
-                entries.discard(rel)
-            section["projects"] = ", ".join(sorted(str(p) for p in entries))
-            _write_ini(cfg_path, cfg)
 
 
 if __name__ == "__main__":

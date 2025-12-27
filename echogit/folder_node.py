@@ -3,9 +3,12 @@ FolderNode: scans directories for Git/Rsync projects or subfolders.
 Uses class-level caches to avoid redundant discovery.
 """
 
+from concurrent.futures import ThreadPoolExecutor
 from functools import cached_property
+import threading
+import time
 from pathlib import Path
-from typing import Dict, Set
+from typing import Dict, Iterator, Set
 
 from echogit.discovery import (
     ProjectRef,
@@ -25,12 +28,16 @@ class FolderNode(Node):
     """
 
     # cache remote listings (per peer) and local listing (once)
-    _remote_cache: Dict[tuple[str, Path], Set[ProjectRef]] = {}
+    _remote_cache: Dict[tuple[str, Path], tuple[float, Set[ProjectRef]]] = {}
     _local_cache: Set[ProjectRef] = set()
     node_by_relpath: Dict[Path, Node] = {}
+    _index_lock = threading.Lock()
+    _cache_lock = threading.Lock()
 
     # marker file to skip a folder subtree
     SKIP_MARKER = ".echogitskip"
+    REMOTE_CACHE_TTL = 60.0
+    SCAN_WORKERS = 4
 
     def __init__(self, path: Path, **kwargs):
         super().__init__(path, **kwargs)
@@ -43,7 +50,7 @@ class FolderNode(Node):
         return True
 
     def get_icon(self) -> str:
-        return "📁" if self.collapse else "📂"
+        return "📁" if self.state.presence.collapse else "📂"
 
     @cached_property
     def git_path(self) -> Path:
@@ -53,11 +60,26 @@ class FolderNode(Node):
     def scan(self, on_update=None) -> None:
         self.children.clear()
 
+        rel_self = self._prepare_scan(on_update=on_update)
+        if rel_self is None:
+            return
+
+        scan_targets = self._scan_local_children(on_update=on_update)
+        self._scan_children(scan_targets, on_update=on_update)
+
+        # Discover missing projects from caches
+        if self.parent is None:
+            self._add_local_projects_from_cache(rel_self, on_update=on_update)
+
+        self.log(f"scan done: {len(self.children)} child node(s)")
+        self.state.presence.scanned = True
+
+    def _prepare_scan(self, on_update=None) -> Path | None:
         # Skip whole subtree if marker file present
         if (self.path / self.SKIP_MARKER).exists():
             self.log(f"scan skipped: {self.SKIP_MARKER} present")
-            self._scanned = True
-            return
+            self.state.presence.scanned = True
+            return None
 
         if self.parent is None and on_update:
             on_update(status="Scanning folders...", increment=False, force=True)
@@ -66,55 +88,83 @@ class FolderNode(Node):
         rel_self = self._rel_from_roots(self.path)
         if rel_self is None:
             self.log("scan skipped: outside configured roots")
-            self._scanned = True
-            return
-        FolderNode.node_by_relpath[rel_self] = self
+            self.state.presence.scanned = True
+            return None
+        with FolderNode._index_lock:
+            FolderNode.node_by_relpath[rel_self] = self
+        return rel_self
 
-        # Immediate local scan
-        for child in sorted(self.path.iterdir()):
-            if not child.is_dir() or child.name in {".git", ".rsync", ".echogit"}:
-                continue
-
-            # Resolve symlinks once, but prevent escaping our roots
+    def _scan_local_children(self, on_update=None) -> list[Node]:
+        scan_targets: list[Node] = []
+        for child in self._iter_child_dirs():
             target = child.resolve()
             child_rel = self._rel_from_roots(target)
             if child_rel is None:
                 continue
-
-            # Skip child subtree if marker file present
             if (target / self.SKIP_MARKER).exists():
                 continue
-
-            # Prevent cycles and duplicate traversal
-            # same logical directory already indexed
-            if child_rel in FolderNode.node_by_relpath:
+            existing = self._reuse_existing_node(child_rel, on_update=on_update)
+            if existing is not None:
+                scan_targets.append(existing)
                 continue
-            # symlink points to this folder or any ancestor -> cycle
             if self._is_ancestor_path(target):
                 continue
+            node = self._build_child_node(target)
+            self._register_child(child_rel, node, on_update=on_update)
+            scan_targets.append(node)
+        return scan_targets
 
-            if (target / ".git").is_dir() or target.suffix == ".git":
-                node = GitProjectNode(path=target, parent=self)
-            elif (target / ".rsync").is_dir() or target.suffix == ".rsync":
-                node = RsyncProjectNode(path=target, parent=self)
-            else:
-                node = FolderNode(path=target, parent=self)
+    def _iter_child_dirs(self) -> Iterator[Path]:
+        for child in sorted(self.path.iterdir()):
+            if not child.is_dir() or child.name in {".git", ".rsync", ".echogit"}:
+                continue
+            yield child
 
-            node.exists_locally = True
-            self.add_child(node)
-            if on_update:
-                on_update(node=node)
-            node.scan(on_update=on_update)
+    def _reuse_existing_node(self, child_rel: Path, on_update=None) -> Node | None:
+        with FolderNode._index_lock:
+            existing = FolderNode.node_by_relpath.get(child_rel)
+        if existing is None:
+            return None
+        existing.parent = self
+        existing.state.presence.exists_locally = True
+        self.add_child(existing)
+        if on_update:
+            on_update(node=existing)
+        return existing
+
+    def _build_child_node(self, target: Path) -> Node:
+        if (target / ".git").is_dir() or target.suffix == ".git":
+            return GitProjectNode(path=target, parent=self)
+        if (target / ".rsync").is_dir() or target.suffix == ".rsync":
+            return RsyncProjectNode(path=target, parent=self)
+        return FolderNode(path=target, parent=self)
+
+    def _register_child(self, child_rel: Path, node: Node, on_update=None) -> None:
+        node.state.presence.exists_locally = True
+        self.add_child(node)
+        if on_update:
+            on_update(node=node)
+        with FolderNode._index_lock:
             FolderNode.node_by_relpath[child_rel] = node
 
-        # Discover missing projects from caches
-        if self.parent is None:
-            self._add_local_projects_from_cache(rel_self, on_update=on_update)
-
-        self.log(f"scan done: {len(self.children)} child node(s)")
-        self._scanned = True
+    def _scan_children(self, scan_targets: list[Node], on_update=None) -> None:
+        if not scan_targets:
+            return
+        if self.SCAN_WORKERS <= 1:
+            for node in scan_targets:
+                node.scan(on_update=on_update)
+            return
+        with ThreadPoolExecutor(max_workers=self.SCAN_WORKERS) as executor:
+            futures = [
+                executor.submit(node.scan, on_update=on_update)
+                for node in scan_targets
+            ]
+            for future in futures:
+                future.result()
 
     def ensure_scanned(self, on_update=None) -> None:
+        if not self.state.presence.scanned:
+            self.scan(on_update=on_update)
         if not self._remote_loaded:
             self._load_remote_projects_for_node(on_update=on_update)
 
@@ -125,7 +175,8 @@ class FolderNode(Node):
             if on_update:
                 on_update(status="Indexing cache...", increment=False, force=True)
             for ref in discover_local_projects(self.path):
-                FolderNode._local_cache.add(ref)
+                with FolderNode._cache_lock:
+                    FolderNode._local_cache.add(ref)
                 self._add_project_from_cache(
                     ref, data_root, on_update=on_update
                 )
@@ -165,14 +216,16 @@ class FolderNode(Node):
         this is how we can add remote projects available from peer that we can clone.
         """
 
-        if rel_path == Path(".") or rel_path in FolderNode.node_by_relpath:
-            return True
+        with FolderNode._index_lock:
+            if rel_path == Path(".") or rel_path in FolderNode.node_by_relpath:
+                return True
 
         ret = self._ensure_parents(rel_path.parent, data_root, on_update=on_update)
         if ret is False:
             return False
 
-        parent_node = FolderNode.node_by_relpath[rel_path.parent]
+        with FolderNode._index_lock:
+            parent_node = FolderNode.node_by_relpath[rel_path.parent]
 
         # Only create childs node under folder node. We dont want childs under
         # projects node.
@@ -182,10 +235,11 @@ class FolderNode(Node):
         abs_path = (self.config.projects_path / rel_path).resolve()
 
         node = FolderNode(path=abs_path, parent=parent_node)
-        node.exists_locally = abs_path.is_dir()
-        node._scanned = True
+        node.state.presence.exists_locally = abs_path.is_dir()
+        node.state.presence.scanned = True
         parent_node.add_child(node)
-        FolderNode.node_by_relpath[rel_path] = node
+        with FolderNode._index_lock:
+            FolderNode.node_by_relpath[rel_path] = node
         if on_update:
             on_update(node=node, increment=False)
         return True
@@ -193,8 +247,9 @@ class FolderNode(Node):
     def _add_project_from_cache(
         self, ref: ProjectRef, data_root: Path, on_update=None
     ) -> None:
-        if ref.rel in FolderNode.node_by_relpath:
-            return  # Already exists locally
+        with FolderNode._index_lock:
+            if ref.rel in FolderNode.node_by_relpath:
+                return  # Already exists locally
 
         # process only subfolders of data_root
         if not ref.rel.is_relative_to(data_root):
@@ -205,7 +260,8 @@ class FolderNode(Node):
         if ret is False:
             return
 
-        parent_node = FolderNode.node_by_relpath[ref.rel.parent]
+        with FolderNode._index_lock:
+            parent_node = FolderNode.node_by_relpath[ref.rel.parent]
         abs_path = (self.config.projects_path / ref.rel).resolve()
 
         if ref.type == "git":
@@ -215,13 +271,14 @@ class FolderNode(Node):
         else:
             return  # Skip unknown type
 
-        node.exists_locally = abs_path.is_dir()
+        node.state.presence.exists_locally = abs_path.is_dir()
         parent_node.add_child(node)
-        parent_node._scanned = True
+        parent_node.state.presence.scanned = True
         if on_update:
             on_update(node=node)
         node.scan(on_update=on_update)
-        FolderNode.node_by_relpath[ref.rel] = node
+        with FolderNode._index_lock:
+            FolderNode.node_by_relpath[ref.rel] = node
 
     def _load_remote_projects_for_node(self, on_update=None) -> None:
         data_root = self._rel_from_roots(self.path)
@@ -239,10 +296,15 @@ class FolderNode(Node):
         # Fetch remote project refs per peer+subdir
         for peer in self.config.peers:
             cache_key = (peer, data_root)
-            if cache_key not in FolderNode._remote_cache:
+            with FolderNode._cache_lock:
+                cached = FolderNode._remote_cache.get(cache_key)
+            now = time.monotonic()
+            if cached is None or now - cached[0] > self.REMOTE_CACHE_TTL:
                 refs = set(discover_remote_projects_under(peer, data_root))
-                FolderNode._remote_cache[cache_key] = refs
-            for ref in FolderNode._remote_cache[cache_key]:
+                with FolderNode._cache_lock:
+                    FolderNode._remote_cache[cache_key] = (now, refs)
+                    cached = FolderNode._remote_cache[cache_key]
+            for ref in cached[1]:
                 self._add_project_from_cache(ref, data_root, on_update=on_update)
 
         if on_update:

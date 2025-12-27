@@ -43,7 +43,7 @@ class BranchNode(Node):
         if branch and branch != self.name:
             safe_run_command(["git", "-C", path, "checkout", branch], cwd=path)
 
-    def sync(self) -> bool:
+    def sync(self, on_progress=None) -> bool:
         remote = self.peer_name
         path = str(self.path)
         branch = self.name
@@ -67,6 +67,11 @@ class BranchNode(Node):
             self.log(out, not success)
             if not success:
                 self._restore_branch(path, original_branch)
+                self._sync_state = "error"
+                if self._current_sync_gen is not None:
+                    self.mark_synced(self._current_sync_gen, False)
+                if on_progress:
+                    on_progress(self, False)
                 return False
         else:
             # Remote branch not found; skip pulling
@@ -80,6 +85,11 @@ class BranchNode(Node):
             self.log(out, not success)
             if not success:
                 self._restore_branch(path, original_branch)
+                self._sync_state = "error"
+                if self._current_sync_gen is not None:
+                    self.mark_synced(self._current_sync_gen, False)
+                if on_progress:
+                    on_progress(self, False)
                 return False
 
             # Check if there are staged changes
@@ -110,4 +120,9 @@ class BranchNode(Node):
         success, out = safe_run_command(push_cmd, cwd=path)
         self.log(out, not success)
         self._restore_branch(path, original_branch)
+        self._sync_state = "ok" if success else "error"
+        if self._current_sync_gen is not None:
+            self.mark_synced(self._current_sync_gen, success)
+        if on_progress:
+            on_progress(self, success)
         return success

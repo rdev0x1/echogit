@@ -55,6 +55,18 @@ Use the following command to sync a folder:
 echogit sync [folder]
 ```
 
+With progress output:
+
+```bash
+echogit sync [folder] --progress
+```
+
+Include dirty state in progress output:
+
+```bash
+echogit sync [folder] --progress --status
+```
+
 ### Listing Projects
 
 ```bash

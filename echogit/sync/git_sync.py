@@ -18,22 +18,23 @@ class GitProjectNode(ProjectNode):
         self._update_dirty_state()
         if on_update:
             on_update(node=self, increment=False)
+        self.state.presence.scanned = True
 
     def _update_dirty_state(self) -> None:
-        if not self.exists_locally:
-            self._is_dirty = False
+        if not self.state.presence.exists_locally:
+            self.state.presence.is_dirty = False
             return
 
         if not (self.path / ".git").is_dir():
-            self._is_dirty = False
+            self.state.presence.is_dirty = False
             return
 
         # Fast path: check tracked changes only to keep TUI responsive.
         cmd = ["git", "-C", str(self.path), "status", "--porcelain=v1", "-uno"]
         success, out = safe_run_command(cmd)
         if success:
-            self._is_dirty = bool(out.strip())
-            if not self._is_dirty:
+            self.state.presence.is_dirty = bool(out.strip())
+            if not self.state.presence.is_dirty:
                 # If tracked changes are clean, check untracked files separately.
                 untracked_cmd = [
                     "git",
@@ -45,9 +46,9 @@ class GitProjectNode(ProjectNode):
                 ]
                 success, out = safe_run_command(untracked_cmd)
                 if success:
-                    self._is_dirty = bool(out.strip())
+                    self.state.presence.is_dirty = bool(out.strip())
                 else:
-                    self._has_error = True
+                    self.state.log.has_error = True
         else:
-            self._is_dirty = False
-            self._has_error = True
+            self.state.presence.is_dirty = False
+            self.state.log.has_error = True
