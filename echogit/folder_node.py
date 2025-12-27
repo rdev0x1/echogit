@@ -49,7 +49,7 @@ class FolderNode(Node):
         """FolderNode does not implement git_path."""
         raise NotImplementedError("FolderNode has no git_path")
 
-    def scan(self) -> None:
+    def scan(self, on_update=None) -> None:
         self.children.clear()
 
         # Skip whole subtree if marker file present
@@ -98,14 +98,18 @@ class FolderNode(Node):
 
             node.exists_locally = True
             self.add_child(node)
-            node.scan()
+            if on_update:
+                on_update()
+            node.scan(on_update=on_update)
             FolderNode.node_by_relpath[child_rel] = node
 
         # Discover missing projects from caches
         if self.parent is None:
-            self._add_missing_projects_from_cache(rel_self)
+            self._add_missing_projects_from_cache(rel_self, on_update=on_update)
 
-    def _add_missing_projects_from_cache(self, data_root: Path) -> None:
+    def _add_missing_projects_from_cache(
+        self, data_root: Path, on_update=None
+    ) -> None:
         all_refs: Set[ProjectRef] = set(FolderNode._local_cache)
 
         # Fetch remote project refs, caching per peer
@@ -124,7 +128,9 @@ class FolderNode(Node):
                 continue
 
             # Recursively ensure parent folders exist
-            ret = self._ensure_parents(ref.rel.parent, data_root)
+            ret = self._ensure_parents(
+                ref.rel.parent, data_root, on_update=on_update
+            )
             if ret is False:
                 continue
 
@@ -140,7 +146,9 @@ class FolderNode(Node):
 
             node.exists_locally = abs_path.is_dir()
             parent_node.add_child(node)
-            node.scan()
+            if on_update:
+                on_update()
+            node.scan(on_update=on_update)
             FolderNode.node_by_relpath[ref.rel] = node
 
     def _rel_from_roots(self, p: Path) -> Path | None:
@@ -168,7 +176,9 @@ class FolderNode(Node):
             cur = cur.parent
         return False
 
-    def _ensure_parents(self, rel_path: Path, data_root: Path) -> bool:
+    def _ensure_parents(
+        self, rel_path: Path, data_root: Path, on_update=None
+    ) -> bool:
         """
         Recursively create intermediate FolderNode entries for missing parents.
         this is how we can add remote projects available from peer that we can clone.
@@ -177,7 +187,7 @@ class FolderNode(Node):
         if rel_path == Path(".") or rel_path in FolderNode.node_by_relpath:
             return True
 
-        ret = self._ensure_parents(rel_path.parent, data_root)
+        ret = self._ensure_parents(rel_path.parent, data_root, on_update=on_update)
         if ret is False:
             return False
 
@@ -194,4 +204,6 @@ class FolderNode(Node):
         node.exists_locally = abs_path.is_dir()
         parent_node.add_child(node)
         FolderNode.node_by_relpath[rel_path] = node
+        if on_update:
+            on_update()
         return True

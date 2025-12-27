@@ -21,7 +21,7 @@ class GitPeerNode(PeerNode):
             raise ValueError(f"Cannot fetch config for peer '{remote}'")
         return rconfig.git_path / self.relative_path.with_suffix(".git")
 
-    def scan(self) -> None:
+    def scan(self, on_update=None) -> None:
         self.children.clear()
         for branch in self._fetch_remote_branches():
             child = BranchNode(
@@ -30,6 +30,8 @@ class GitPeerNode(PeerNode):
                 parent=self,
             )
             self.add_child(child)
+            if on_update:
+                on_update()
 
     def _fetch_remote_branches(self) -> list[str]:
 

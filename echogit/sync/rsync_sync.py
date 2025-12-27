@@ -12,5 +12,5 @@ class RsyncProjectNode(ProjectNode):
         rel = self.relative_path
         return (self.config.git_path / rel).with_suffix(".rsync")
 
-    def scan(self) -> None:
-        self._scan(RsyncPeerNode)
+    def scan(self, on_update=None) -> None:
+        self._scan(RsyncPeerNode, on_update=on_update)

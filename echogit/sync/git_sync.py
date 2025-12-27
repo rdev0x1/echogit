@@ -12,5 +12,5 @@ class GitProjectNode(ProjectNode):
         rel = self.relative_path
         return (self.config.git_path / rel).with_suffix(".git")
 
-    def scan(self) -> None:
-        self._scan(GitPeerNode)
+    def scan(self, on_update=None) -> None:
+        self._scan(GitPeerNode, on_update=on_update)

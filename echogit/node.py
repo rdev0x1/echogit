@@ -56,7 +56,7 @@ class Node:
         child.parent = self
         self.children.append(child)
 
-    def scan(self) -> None:
+    def scan(self, on_update=None) -> None:
         """
         Default scan method. Folder-type nodes override this.
         """
@@ -88,7 +88,7 @@ class Node:
         """
         if self._has_error:
             return True
-        return any(child.has_error() for child in self.children)
+        return any(child.has_error() for child in list(self.children))
 
     def sync(self) -> bool:
         """

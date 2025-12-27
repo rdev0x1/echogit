@@ -18,7 +18,7 @@ class ProjectNode(Node):
                 return True
         return False
 
-    def _scan(self, cls) -> None:
+    def _scan(self, cls, on_update=None) -> None:
         self.children.clear()
 
         # Remote project: nothing to do until the user decide to clone it
@@ -33,5 +33,7 @@ class ProjectNode(Node):
                 continue
 
             peer_node = cls(path=self.path, peer_name=peer_name, parent=self)
-            peer_node.scan()
+            peer_node.scan(on_update=on_update)
             self.add_child(peer_node)
+            if on_update:
+                on_update()

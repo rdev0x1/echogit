@@ -18,7 +18,7 @@ class BranchNode(Node):
     def get_icon(self) -> str:
         return "🌿"
 
-    def scan(self):
+    def scan(self, on_update=None):
         self.children.clear()
 
     @cached_property
