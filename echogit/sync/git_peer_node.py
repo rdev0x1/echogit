@@ -31,7 +31,8 @@ class GitPeerNode(PeerNode):
             )
             self.add_child(child)
             if on_update:
-                on_update()
+                on_update(node=child, increment=False)
+        self.log(f"scan done: {len(self.children)} branch(es)")
 
     def _fetch_remote_branches(self) -> list[str]:
 

@@ -14,12 +14,14 @@ class BranchNode(Node):
         super().__init__(path=path, parent=parent)
         self.name = branch_name
         self.peer_name = parent.name
+        self._scanned = True
 
     def get_icon(self) -> str:
         return "🌿"
 
     def scan(self, on_update=None):
         self.children.clear()
+        self._scanned = True
 
     @cached_property
     def git_path(self) -> Path:

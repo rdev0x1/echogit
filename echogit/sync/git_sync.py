@@ -3,6 +3,7 @@ from pathlib import Path
 
 from echogit.sync.git_peer_node import GitPeerNode
 from echogit.sync.project_node import ProjectNode
+from echogit.utils import safe_run_command
 
 
 class GitProjectNode(ProjectNode):
@@ -14,3 +15,39 @@ class GitProjectNode(ProjectNode):
 
     def scan(self, on_update=None) -> None:
         self._scan(GitPeerNode, on_update=on_update)
+        self._update_dirty_state()
+        if on_update:
+            on_update(node=self, increment=False)
+
+    def _update_dirty_state(self) -> None:
+        if not self.exists_locally:
+            self._is_dirty = False
+            return
+
+        if not (self.path / ".git").is_dir():
+            self._is_dirty = False
+            return
+
+        # Fast path: check tracked changes only to keep TUI responsive.
+        cmd = ["git", "-C", str(self.path), "status", "--porcelain=v1", "-uno"]
+        success, out = safe_run_command(cmd)
+        if success:
+            self._is_dirty = bool(out.strip())
+            if not self._is_dirty:
+                # If tracked changes are clean, check untracked files separately.
+                untracked_cmd = [
+                    "git",
+                    "-C",
+                    str(self.path),
+                    "ls-files",
+                    "--others",
+                    "--exclude-standard",
+                ]
+                success, out = safe_run_command(untracked_cmd)
+                if success:
+                    self._is_dirty = bool(out.strip())
+                else:
+                    self._has_error = True
+        else:
+            self._is_dirty = False
+            self._has_error = True

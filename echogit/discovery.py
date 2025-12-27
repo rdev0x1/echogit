@@ -4,9 +4,9 @@ Skips any subtree that contains a '.echogitskip' marker file.
 """
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 from typing import Iterator, Set
-import subprocess
 import shlex
 
 from echogit.config import Config
@@ -100,14 +100,48 @@ def discover_local_projects(root: Path) -> Iterator[ProjectRef]:
     rel is relative to `root`, type is "git" or "rsync".
     """
     root = root.resolve()
-    cmd = _build_find_cmd(root)
-    res = subprocess.run(
-        cmd, shell=True, check=False,
-        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True
-    )
-    if res.returncode != 0:
-        return
-    yield from _parse_find_output(res.stdout, root)
+    seen: Set[Path] = set()
+
+    def _maybe_ref(p: Path) -> ProjectRef | None:
+        if p.name == ".git" or p.suffix == ".git":
+            sync_type = "git"
+        elif p.name == ".rsync" or p.suffix == ".rsync":
+            sync_type = "rsync"
+        else:
+            return None
+
+        ref = _normalize(p, sync_type)
+        rel = ref.rel.relative_to(root)
+        if any(parent in seen for parent in rel.parents):
+            return None
+        seen.add(rel)
+        return ProjectRef(rel=rel, type=ref.type)
+
+    for dirpath, dirnames, _ in os.walk(root):
+        current = Path(dirpath)
+        if (current / SKIP_MARKER).exists():
+            dirnames[:] = []
+            continue
+
+        # If current directory itself is a repo, yield it and prune.
+        ref = _maybe_ref(current)
+        if ref is not None:
+            yield ref
+        if current.name in (".git", ".rsync") or current.suffix in (".git", ".rsync"):
+            dirnames[:] = []
+            continue
+
+        # Prune repo dirs and skip-marked dirs; yield repos immediately.
+        for name in list(dirnames):
+            child = current / name
+            if name in (".git", ".rsync") or child.suffix in (".git", ".rsync"):
+                ref = _maybe_ref(child)
+                if ref is not None:
+                    yield ref
+                dirnames.remove(name)
+                continue
+            if (child / SKIP_MARKER).exists():
+                dirnames.remove(name)
 
 
 def discover_remote_projects(peer: str) -> Iterator[ProjectRef]:

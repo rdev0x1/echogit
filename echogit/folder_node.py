@@ -54,17 +54,18 @@ class FolderNode(Node):
 
         # Skip whole subtree if marker file present
         if (self.path / self.SKIP_MARKER).exists():
+            self.log(f"scan skipped: {self.SKIP_MARKER} present")
             return
+
+        if self.parent is None and on_update:
+            on_update(status="Scanning folders...", increment=False, force=True)
 
         # Index this folder only if it’s inside an allowed root
         rel_self = self._rel_from_roots(self.path)
         if rel_self is None:
+            self.log("scan skipped: outside configured roots")
             return
         FolderNode.node_by_relpath[rel_self] = self
-
-        # At root only, build local cache once
-        if self.parent is None and not FolderNode._local_cache:
-            FolderNode._local_cache = set(discover_local_projects(self.path))
 
         # Immediate local scan
         for child in sorted(self.path.iterdir()):
@@ -99,7 +100,7 @@ class FolderNode(Node):
             node.exists_locally = True
             self.add_child(node)
             if on_update:
-                on_update()
+                on_update(node=node)
             node.scan(on_update=on_update)
             FolderNode.node_by_relpath[child_rel] = node
 
@@ -107,49 +108,30 @@ class FolderNode(Node):
         if self.parent is None:
             self._add_missing_projects_from_cache(rel_self, on_update=on_update)
 
+        self.log(f"scan done: {len(self.children)} child node(s)")
+
     def _add_missing_projects_from_cache(
         self, data_root: Path, on_update=None
     ) -> None:
-        all_refs: Set[ProjectRef] = set(FolderNode._local_cache)
+        if not FolderNode._local_cache:
+            if on_update:
+                on_update(status="Indexing cache...", increment=False, force=True)
+            for ref in discover_local_projects(self.path):
+                FolderNode._local_cache.add(ref)
+                self._add_project_from_cache(
+                    ref, data_root, on_update=on_update
+                )
+            if on_update:
+                on_update(status="Indexing remote cache...", increment=False, force=True)
 
         # Fetch remote project refs, caching per peer
         for peer in self.config.peers:
             if peer not in FolderNode._remote_cache:
                 FolderNode._remote_cache[peer] = set(discover_remote_projects(peer))
-            all_refs.update(FolderNode._remote_cache[peer])
-
-        for ref in all_refs:
-
-            if ref.rel in FolderNode.node_by_relpath:
-                continue  # Already exists locally
-
-            # process only suboflders of data_root
-            if not ref.rel.is_relative_to(data_root):
-                continue
-
-            # Recursively ensure parent folders exist
-            ret = self._ensure_parents(
-                ref.rel.parent, data_root, on_update=on_update
-            )
-            if ret is False:
-                continue
-
-            parent_node = FolderNode.node_by_relpath[ref.rel.parent]
-            abs_path = (self.config.projects_path / ref.rel).resolve()
-
-            if ref.type == "git":
-                node = GitProjectNode(path=abs_path, parent=parent_node)
-            elif ref.type == "rsync":
-                node = RsyncProjectNode(path=abs_path, parent=parent_node)
-            else:
-                continue  # Skip unknown type
-
-            node.exists_locally = abs_path.is_dir()
-            parent_node.add_child(node)
-            if on_update:
-                on_update()
-            node.scan(on_update=on_update)
-            FolderNode.node_by_relpath[ref.rel] = node
+            for ref in FolderNode._remote_cache[peer]:
+                self._add_project_from_cache(
+                    ref, data_root, on_update=on_update
+                )
 
     def _rel_from_roots(self, p: Path) -> Path | None:
         """
@@ -205,5 +187,37 @@ class FolderNode(Node):
         parent_node.add_child(node)
         FolderNode.node_by_relpath[rel_path] = node
         if on_update:
-            on_update()
+            on_update(node=node, increment=False)
         return True
+
+    def _add_project_from_cache(
+        self, ref: ProjectRef, data_root: Path, on_update=None
+    ) -> None:
+        if ref.rel in FolderNode.node_by_relpath:
+            return  # Already exists locally
+
+        # process only subfolders of data_root
+        if not ref.rel.is_relative_to(data_root):
+            return
+
+        # Recursively ensure parent folders exist
+        ret = self._ensure_parents(ref.rel.parent, data_root, on_update=on_update)
+        if ret is False:
+            return
+
+        parent_node = FolderNode.node_by_relpath[ref.rel.parent]
+        abs_path = (self.config.projects_path / ref.rel).resolve()
+
+        if ref.type == "git":
+            node = GitProjectNode(path=abs_path, parent=parent_node)
+        elif ref.type == "rsync":
+            node = RsyncProjectNode(path=abs_path, parent=parent_node)
+        else:
+            return  # Skip unknown type
+
+        node.exists_locally = abs_path.is_dir()
+        parent_node.add_child(node)
+        if on_update:
+            on_update(node=node)
+        node.scan(on_update=on_update)
+        FolderNode.node_by_relpath[ref.rel] = node

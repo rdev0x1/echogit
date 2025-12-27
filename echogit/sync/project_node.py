@@ -23,6 +23,7 @@ class ProjectNode(Node):
 
         # Remote project: nothing to do until the user decide to clone it
         if self.exists_locally is False:
+            self.log("scan skipped: project not cloned")
             return
 
         config = self.config
@@ -36,4 +37,6 @@ class ProjectNode(Node):
             peer_node.scan(on_update=on_update)
             self.add_child(peer_node)
             if on_update:
-                on_update()
+                on_update(node=peer_node, increment=False)
+
+        self.log(f"scan done: {len(self.children)} peer(s)")

@@ -25,6 +25,7 @@ class Node:
         self.children: List[Node] = []
         self._log_lines: list[str] = []
         self._has_error: bool = False
+        self._is_dirty: bool = False
         self.exists_locally: bool = self.path.exists()
         self.collapse: bool = True
         self.remote_peers = []
@@ -89,6 +90,12 @@ class Node:
         if self._has_error:
             return True
         return any(child.has_error() for child in list(self.children))
+
+    def is_dirty(self) -> bool:
+        """
+        Return True if this node represents a dirty working tree.
+        """
+        return self._is_dirty
 
     def sync(self) -> bool:
         """
