@@ -3,7 +3,23 @@ Utility functions for SSH commands and safe subprocess execution.
 """
 
 import logging
+import socket
 import subprocess
+
+
+def _is_local_peer(peer_host: str) -> bool:
+    if peer_host in {"localhost", "127.0.0.1", "::1"}:
+        return True
+    host = socket.gethostname()
+    fqdn = socket.getfqdn()
+    if peer_host in {host, fqdn}:
+        return True
+    try:
+        peer_ips = {addr[0] for addr in socket.getaddrinfo(peer_host, None)}
+        local_ips = {addr[0] for addr in socket.getaddrinfo(host, None)}
+        return bool(peer_ips & local_ips)
+    except socket.gaierror:
+        return False
 
 
 def run_ssh_command(peer_host: str, command: str) -> tuple[bool, str]:
@@ -14,6 +30,8 @@ def run_ssh_command(peer_host: str, command: str) -> tuple[bool, str]:
     :param command: command string to run remotely
     :returns: (success, combined_output)
     """
+    if _is_local_peer(peer_host):
+        return safe_run_command(["bash", "-lc", command])
     ssh_command = ["ssh", peer_host, command]
     return safe_run_command(ssh_command)
 
@@ -22,6 +40,8 @@ def is_peer_reachable(peer: str, timeout: int = 2) -> bool:
     """
     Return True if ssh is working in under `timeout` seconds.
     """
+    if _is_local_peer(peer):
+        return True
     timeout_opt = f"ConnectTimeout={timeout}"
     cmd = ["ssh", "-o", "BatchMode=yes", "-o", timeout_opt, peer, "true"]
 

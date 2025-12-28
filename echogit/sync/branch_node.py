@@ -1,8 +1,9 @@
 from functools import cached_property
 from pathlib import Path
+import subprocess
 
 from echogit.node import Node
-from echogit.utils import safe_run_command
+from echogit.utils import _is_local_peer, safe_run_command
 
 
 class BranchNode(Node):
@@ -29,19 +30,33 @@ class BranchNode(Node):
 
     def _checkout_or_create(self, path: str, remote: str, branch: str):
         ok, _ = safe_run_command(
-            ["git", "-C", path, "rev-parse", "--verify", branch], cwd=path
+            ["git", "-C", path, "show-ref", "--verify", f"refs/heads/{branch}"],
+            cwd=path,
         )
+        remote_ref = f"refs/remotes/{remote}/{branch}"
         if ok:
             safe_run_command(["git", "-C", path, "checkout", branch], cwd=path)
         else:
             safe_run_command(
-                ["git", "-C", path, "checkout", "-b", branch, f"{remote}/{branch}"],
-                cwd=path,
+                ["git", "-C", path, "branch", branch, remote_ref], cwd=path
             )
+            safe_run_command(["git", "-C", path, "checkout", branch], cwd=path)
 
     def _restore_branch(self, path: str, branch: str | None):
         if branch and branch != self.name:
             safe_run_command(["git", "-C", path, "checkout", branch], cwd=path)
+
+    def _is_ancestor(self, path: str, ancestor: str, descendant: str) -> bool:
+        cmd = ["git", "-C", path, "merge-base", "--is-ancestor", ancestor, descendant]
+        result = subprocess.run(cmd, cwd=path, capture_output=True, text=True)
+        return result.returncode == 0
+
+    def _rev_parse(self, path: str, ref: str) -> str | None:
+        cmd = ["git", "-C", path, "rev-parse", ref]
+        result = subprocess.run(cmd, cwd=path, capture_output=True, text=True)
+        if result.returncode != 0:
+            return None
+        return result.stdout.strip()
 
     def sync(self, on_progress=None) -> bool:
         remote = self.peer_name
@@ -54,18 +69,52 @@ class BranchNode(Node):
         )
         original_branch = out.strip() if ok else None
 
-        # Only attempt to pull if the branch actually exists on the remote
-        check_cmd = ["git", "-C", path, "ls-remote", "--heads", remote, branch]
-        exists, out = safe_run_command(check_cmd, cwd=path)
-        if exists and out.strip():
+        # Only attempt to pull if the branch exists on the remote
+        exists = False
+        if _is_local_peer(remote):
+            exists = True
+        else:
+            check_cmd = ["git", "-C", path, "ls-remote", "--heads", remote, branch]
+            ok, out = safe_run_command(check_cmd, cwd=path)
+            exists = ok and out.strip() != ""
+
+        if exists:
             # Checkout or create a local branch that tracks the remote branch
             self._checkout_or_create(path, remote, branch)
 
-            # Pull latest remote changes into the same-named local branch
-            pull_cmd = ["git", "-C", path, "pull", remote, branch]
-            success, out = safe_run_command(pull_cmd, cwd=path)
+            # Fetch only the requested branch, then fast-forward merge it.
+            fetch_cmd = ["git", "-C", path, "fetch", remote, branch]
+            success, out = safe_run_command(fetch_cmd, cwd=path)
             self.log(out, not success)
             if not success:
+                self._restore_branch(path, original_branch)
+                if self._current_sync_gen is not None:
+                    self.mark_synced(self._current_sync_gen, False)
+                return False
+
+            local_ref = f"refs/heads/{branch}"
+            remote_ref = f"refs/remotes/{remote}/{branch}"
+            if self._is_ancestor(path, remote_ref, local_ref):
+                self.log("local ahead of remote; skipping pull", False)
+            elif self._is_ancestor(path, local_ref, remote_ref):
+                merge_cmd = ["git", "-C", path, "merge", "--ff-only", remote_ref]
+                success, out = safe_run_command(merge_cmd, cwd=path)
+                self.log(out, not success)
+                if not success:
+                    self._restore_branch(path, original_branch)
+                    self._sync_state = "error"
+                    if self._current_sync_gen is not None:
+                        self.mark_synced(self._current_sync_gen, False)
+                    if on_progress:
+                        on_progress(self, False)
+                    return False
+            else:
+                local_sha = self._rev_parse(path, local_ref) or "unknown"
+                remote_sha = self._rev_parse(path, remote_ref) or "unknown"
+                self.log(
+                    f"local and remote diverged ({local_sha} vs {remote_sha})",
+                    True,
+                )
                 self._restore_branch(path, original_branch)
                 self._sync_state = "error"
                 if self._current_sync_gen is not None:
