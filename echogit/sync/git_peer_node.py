@@ -12,6 +12,11 @@ class GitPeerNode(PeerNode):
     Represents one remote peer under a Git project.
     We’ll list all remote branches and make one BranchNode each.
     """
+    defer_scan = True
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._branches_loaded = False
 
     @cached_property
     def git_path(self) -> Path:
@@ -22,6 +27,8 @@ class GitPeerNode(PeerNode):
         return rconfig.git_path / self.relative_path.with_suffix(".git")
 
     def scan(self, on_update=None) -> None:
+        if self._branches_loaded:
+            return
         self.children.clear()
         for branch in self._fetch_remote_branches():
             child = BranchNode(
@@ -30,9 +37,16 @@ class GitPeerNode(PeerNode):
                 parent=self,
             )
             self.add_child(child)
+            child.log("branch discovered")
             if on_update:
                 on_update(node=child, increment=False)
         self.log(f"scan done: {len(self.children)} branch(es)")
+        self._branches_loaded = True
+        self._scanned = True
+
+    def ensure_scanned(self, on_update=None) -> None:
+        if not self._branches_loaded:
+            self.scan(on_update=on_update)
 
     def _fetch_remote_branches(self) -> list[str]:
 

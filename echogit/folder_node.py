@@ -10,7 +10,7 @@ from typing import Dict, Set
 from echogit.discovery import (
     ProjectRef,
     discover_local_projects,
-    discover_remote_projects,
+    discover_remote_projects_under,
 )
 from echogit.node import Node
 from echogit.sync.git_sync import GitProjectNode
@@ -25,7 +25,7 @@ class FolderNode(Node):
     """
 
     # cache remote listings (per peer) and local listing (once)
-    _remote_cache: Dict[str, Set[ProjectRef]] = {}
+    _remote_cache: Dict[tuple[str, Path], Set[ProjectRef]] = {}
     _local_cache: Set[ProjectRef] = set()
     node_by_relpath: Dict[Path, Node] = {}
 
@@ -34,6 +34,7 @@ class FolderNode(Node):
 
     def __init__(self, path: Path, **kwargs):
         super().__init__(path, **kwargs)
+        self._remote_loaded = False
 
     @cached_property
     def is_folder(self) -> bool:
@@ -55,6 +56,7 @@ class FolderNode(Node):
         # Skip whole subtree if marker file present
         if (self.path / self.SKIP_MARKER).exists():
             self.log(f"scan skipped: {self.SKIP_MARKER} present")
+            self._scanned = True
             return
 
         if self.parent is None and on_update:
@@ -64,6 +66,7 @@ class FolderNode(Node):
         rel_self = self._rel_from_roots(self.path)
         if rel_self is None:
             self.log("scan skipped: outside configured roots")
+            self._scanned = True
             return
         FolderNode.node_by_relpath[rel_self] = self
 
@@ -106,11 +109,16 @@ class FolderNode(Node):
 
         # Discover missing projects from caches
         if self.parent is None:
-            self._add_missing_projects_from_cache(rel_self, on_update=on_update)
+            self._add_local_projects_from_cache(rel_self, on_update=on_update)
 
         self.log(f"scan done: {len(self.children)} child node(s)")
+        self._scanned = True
 
-    def _add_missing_projects_from_cache(
+    def ensure_scanned(self, on_update=None) -> None:
+        if not self._remote_loaded:
+            self._load_remote_projects_for_node(on_update=on_update)
+
+    def _add_local_projects_from_cache(
         self, data_root: Path, on_update=None
     ) -> None:
         if not FolderNode._local_cache:
@@ -122,16 +130,7 @@ class FolderNode(Node):
                     ref, data_root, on_update=on_update
                 )
             if on_update:
-                on_update(status="Indexing remote cache...", increment=False, force=True)
-
-        # Fetch remote project refs, caching per peer
-        for peer in self.config.peers:
-            if peer not in FolderNode._remote_cache:
-                FolderNode._remote_cache[peer] = set(discover_remote_projects(peer))
-            for ref in FolderNode._remote_cache[peer]:
-                self._add_project_from_cache(
-                    ref, data_root, on_update=on_update
-                )
+                on_update(status="Scanning folders...", increment=False, force=True)
 
     def _rel_from_roots(self, p: Path) -> Path | None:
         """
@@ -184,6 +183,7 @@ class FolderNode(Node):
 
         node = FolderNode(path=abs_path, parent=parent_node)
         node.exists_locally = abs_path.is_dir()
+        node._scanned = True
         parent_node.add_child(node)
         FolderNode.node_by_relpath[rel_path] = node
         if on_update:
@@ -217,7 +217,34 @@ class FolderNode(Node):
 
         node.exists_locally = abs_path.is_dir()
         parent_node.add_child(node)
+        parent_node._scanned = True
         if on_update:
             on_update(node=node)
         node.scan(on_update=on_update)
         FolderNode.node_by_relpath[ref.rel] = node
+
+    def _load_remote_projects_for_node(self, on_update=None) -> None:
+        data_root = self._rel_from_roots(self.path)
+        if data_root is None:
+            self._remote_loaded = True
+            return
+
+        if on_update:
+            on_update(
+                status=f"Indexing remote cache: {data_root}",
+                increment=False,
+                force=True,
+            )
+
+        # Fetch remote project refs per peer+subdir
+        for peer in self.config.peers:
+            cache_key = (peer, data_root)
+            if cache_key not in FolderNode._remote_cache:
+                refs = set(discover_remote_projects_under(peer, data_root))
+                FolderNode._remote_cache[cache_key] = refs
+            for ref in FolderNode._remote_cache[cache_key]:
+                self._add_project_from_cache(ref, data_root, on_update=on_update)
+
+        if on_update:
+            on_update(status="Scanning folders...", increment=False, force=True)
+        self._remote_loaded = True

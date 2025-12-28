@@ -26,6 +26,7 @@ class Node:
         self._log_lines: list[str] = []
         self._has_error: bool = False
         self._is_dirty: bool = False
+        self._scanned: bool = False
         self.exists_locally: bool = self.path.exists()
         self.collapse: bool = True
         self.remote_peers = []
@@ -62,6 +63,7 @@ class Node:
         Default scan method. Folder-type nodes override this.
         """
         self.children.clear()
+        self._scanned = True
 
     def get_collapse(self) -> bool:
         """Return True if children has to be hidden"""
@@ -70,6 +72,10 @@ class Node:
     def toggle_collapse(self) -> None:
         """hide or show a node's children. Used by TUI"""
         self.collapse = not self.collapse
+
+    def ensure_scanned(self, on_update=None) -> None:
+        """Optional hook for lazy child discovery."""
+        return
 
     def get_logs(self) -> str:
         """get logs. Used by TUI"""
@@ -96,6 +102,12 @@ class Node:
         Return True if this node represents a dirty working tree.
         """
         return self._is_dirty
+
+    def is_scanned(self) -> bool:
+        """
+        Return True if this node's scan has completed.
+        """
+        return self._scanned
 
     def sync(self) -> bool:
         """

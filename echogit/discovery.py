@@ -155,17 +155,23 @@ def discover_remote_projects(peer: str) -> Iterator[ProjectRef]:
     if rconfig is None:
         return
 
-    def _ssh_find(path: Path) -> Iterator[ProjectRef]:
-        cmd = _build_find_cmd(path)
-        success, out = run_ssh_command(peer, cmd)
-        if not success:
-            return
-        yield from _parse_find_output(out, path)
-
-    roots: list[Path] = []
     if getattr(rconfig, "git_path", None):
-        roots.append(rconfig.git_path)
+        yield from discover_remote_projects_under(peer, Path("."))
 
-    for rt in roots:
-        if rt:
-            yield from _ssh_find(rt)
+
+def discover_remote_projects_under(peer: str, subdir: Path) -> Iterator[ProjectRef]:
+    """
+    SSH into `peer` and find projects under a specific subdir of its root.
+    rel is still relative to the peer's root.
+    """
+    rconfig = Config.get_config_peer(peer)
+    if rconfig is None or not getattr(rconfig, "git_path", None):
+        return
+
+    root = rconfig.git_path
+    base = root / subdir
+    cmd = _build_find_cmd(base)
+    success, out = run_ssh_command(peer, cmd)
+    if not success:
+        return
+    yield from _parse_find_output(out, root)
