@@ -57,6 +57,8 @@ class ProjectWidget(urwid.WidgetWrap):
         self.status.set_text(node_state)
 
     def keypress(self, _, key):
+        if not isinstance(key, str):
+            return key
         if key in ("enter", " "):
             self.toggle_expand()
         elif key.lower() == "l":
