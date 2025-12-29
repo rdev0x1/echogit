@@ -79,6 +79,21 @@ echogit list [folder] --remote -p peer_name
 echogit tui
 ```
 
+Controls in TUI:
+
+- `enter` / `space`: expand or collapse folders
+- `r`: scan + sync the selected node (recursively), then push
+- `l`: show logs for the selected node
+- `q`: quit
+
+Status meanings:
+
+- `SYNC?`: not synced yet in this session
+- `SYNCED`: sync completed successfully
+- `STALE`: sync completed, but local changes exist
+- `DIRTY`: local changes exist, sync not completed yet
+- `ERR`: last sync had errors
+
 ## Android support
 
 There is an Android version called [echogit-mobile]. It provides a UI to control the normal Echogit application through [termux] and the Termux API. This allows you to manage synchronization on Android devices, using the same functionality available on the desktop version.
@@ -91,33 +106,7 @@ Run the test with:
 > pytest
 ```
 
-## Plugins (optional)
-
-Echogit supports a plugin system for custom behavior during scan, clone, sync, and error events. Plugins live in a directory you configure (default: '~/.config/echogit/plugins') and must expose a 'plugin.py' with a 'register()' function.
-
-Example layout:
-
-```
-~/.config/echogit/plugins/
-├── my_metadata_plugin/
-│   └── plugin.py
-└── notify_rss/
-    └── plugin.py
-```
-
-To enable plugins, add these lines to your '~/.config/echogit/config.ini' under '[DEFAULT]':
-
-```ini
-plugin_dir = ~/.config/echogit/plugins
-plugins = my_metadata_plugin, notify_rss
-```
-
-Then, when you run any echogit command, these plugins will be loaded automatically at startup.
-
-> **Note:** The built-in metadata-symlink plugin demonstrates how to manage '.echogit' folders via symlinks. Because externalizing metadata can introduce its own complexity (broken links, path mismatches), you might prefer keeping your metadata files versioned directly inside each Git project. The metadata plugin is available for power users but is entirely optional.
-
 [etckeeper]: https://etckeeper.branchable.com/
 [pass]: https://www.passwordstore.org/
 [termux]: https://termux.dev/en/
 [echogit-mobile]: https://github.com/rdev0x1/echogit-mobile
-[metadata]: https://github.com/rdev0x1/echogit-plugin-metadata

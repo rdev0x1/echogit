@@ -12,9 +12,6 @@ echogit/
 ├── discovery.py  # discovery logic (local & remote)
 ├── tui.py        # unchanged, keep as-is
 └── utils.py      # helpers (ssh, subprocess helpers)
-|__plugin/
-         ├── loader.py 
-         └── bus.py
 
 ## Flag used on TUI
 
