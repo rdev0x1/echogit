@@ -41,6 +41,7 @@ class Config:
         plugins: List[str],
         plugin_dir: str,
         auto_commit_projects: Set[Path],
+        ignore_peers_down: bool,
     ):
         self.projects_path = projects_path.expanduser().resolve()
         self.git_path = git_path.expanduser().resolve() if git_path else None
@@ -49,6 +50,7 @@ class Config:
         self.plugins = plugins
         self.plugin_dir = plugin_dir
         self.auto_commit_projects = auto_commit_projects
+        self.ignore_peers_down = ignore_peers_down
 
     @cached_property
     def peers(self) -> List[str]:
@@ -86,6 +88,9 @@ class Config:
             if p.strip()
         ]
         plugin_dir = cfg.get("DEFAULT", "plugin_dir", fallback="~/echogit/plugins/")
+        ignore_peers_down = cfg.getboolean(
+            "DEFAULT", "ignore_peers_down", fallback=False
+        )
         peers = [
             p.strip()
             for p in cfg.get("PEERS", "peers", fallback="").split(",")
@@ -124,6 +129,7 @@ class Config:
             plugins=plugins,
             plugin_dir=plugin_dir,
             auto_commit_projects=auto_commit_projects,
+            ignore_peers_down=ignore_peers_down,
         )
 
     @classmethod

@@ -67,6 +67,32 @@ Include dirty state in progress output:
 echogit sync [folder] --progress --status
 ```
 
+### Config
+
+Get global config values:
+
+```bash
+echogit config -g
+```
+
+Set global config values:
+
+```bash
+echogit config -s "ignore_peers_down:true, projects_path=/path/to/data"
+```
+
+Get per-project config:
+
+```bash
+echogit config /path/to/project -g
+```
+
+Set per-project auto-commit:
+
+```bash
+echogit config /path/to/project -s "autoCommit:true"
+```
+
 ### Listing Projects
 
 ```bash

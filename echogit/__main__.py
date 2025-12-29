@@ -6,6 +6,8 @@ import argparse
 import logging
 import sys
 from pathlib import Path
+import configparser
+import os
 
 from echogit.config import Config
 from echogit.discovery import discover_local_projects, discover_remote_projects
@@ -42,6 +44,22 @@ def main():
         "--status",
         action="store_true",
         help="include dirty status in progress output",
+    )
+
+    config_parser = subparsers.add_parser("config", help="Get/set configuration")
+    config_parser.add_argument("path", nargs="?", default=None)
+    config_parser.add_argument(
+        "-g",
+        "--get",
+        action="store_true",
+        help="print configuration values",
+    )
+    config_parser.add_argument(
+        "-s",
+        "--set",
+        dest="set_values",
+        default=None,
+        help="set values (key:value, key=value)",
     )
 
     tui_parser = subparsers.add_parser("tui", help="Launch TUI interface")
@@ -93,6 +111,15 @@ def main():
             print("Sync failed")
             sys.exit(1)
 
+    elif args.command == "config":
+        if not args.get and not args.set_values:
+            print("config: use -g or -s")
+            sys.exit(2)
+        if args.path:
+            _handle_project_config(config, args.path, args.get, args.set_values)
+        else:
+            _handle_global_config(args.get, args.set_values)
+
     elif args.command == "tui":
         path = Path(args.path or config.projects_path)
         run_ui(path, config)
@@ -137,6 +164,100 @@ class _ColorFormatter(logging.Formatter):
         if not color:
             return msg
         return f"{color}{msg}\x1b[0m"
+
+
+def _parse_kv_list(raw: str) -> dict[str, str]:
+    pairs = {}
+    for part in raw.split(","):
+        item = part.strip()
+        if not item:
+            continue
+        if ":" in item:
+            key, val = item.split(":", 1)
+        elif "=" in item:
+            key, val = item.split("=", 1)
+        else:
+            continue
+        pairs[key.strip()] = val.strip()
+    return pairs
+
+
+def _load_ini(path: Path) -> configparser.ConfigParser:
+    cfg = configparser.ConfigParser()
+    if path.exists():
+        cfg.read(path)
+    return cfg
+
+
+def _write_ini(path: Path, cfg: configparser.ConfigParser) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
+        cfg.write(f)
+
+
+def _handle_global_config(do_get: bool, set_values: str | None) -> None:
+    cfg_path = Path(os.path.expandvars(Config.CONFIG_FILE)).expanduser()
+    cfg = _load_ini(cfg_path)
+
+    if do_get:
+        projects_path = cfg.get("DEFAULT", "projects_path", fallback="")
+        ignore_peers_down = cfg.getboolean(
+            "DEFAULT", "ignore_peers_down", fallback=False
+        )
+        print(f"Data Path: {projects_path}")
+        print(f"Ignore peers down: {ignore_peers_down}")
+
+    if set_values:
+        values = _parse_kv_list(set_values)
+        if "projects_path" in values:
+            cfg.setdefault("DEFAULT", {})
+            cfg["DEFAULT"]["projects_path"] = values["projects_path"]
+        if "ignore_peers_down" in values:
+            cfg.setdefault("DEFAULT", {})
+            cfg["DEFAULT"]["ignore_peers_down"] = values["ignore_peers_down"]
+        _write_ini(cfg_path, cfg)
+
+
+def _handle_project_config(
+    config: Config, path: str, do_get: bool, set_values: str | None
+) -> None:
+    project_path = Path(path).expanduser().resolve()
+    try:
+        rel = project_path.relative_to(config.projects_path)
+    except ValueError:
+        rel = project_path
+
+    cfg_path = Path(os.path.expandvars(Config.CONFIG_FILE)).expanduser()
+    cfg = _load_ini(cfg_path)
+
+    if do_get:
+        section = cfg.get("AUTOCOMMIT", "projects", fallback="")
+        entries = {
+            Path(p.strip())
+            for p in section.replace(",", "\n").splitlines()
+            if p.strip()
+        }
+        auto_commit = rel in entries
+        print(f"Auto commit: {auto_commit}")
+
+    if set_values:
+        values = _parse_kv_list(set_values)
+        auto_commit_raw = values.get("autoCommit") or values.get("auto_commit")
+        if auto_commit_raw is not None:
+            auto_commit = auto_commit_raw.lower() in {"1", "true", "yes", "on"}
+            section = cfg.setdefault("AUTOCOMMIT", {})
+            current = section.get("projects", "")
+            entries = {
+                Path(p.strip())
+                for p in current.replace(",", "\n").splitlines()
+                if p.strip()
+            }
+            if auto_commit:
+                entries.add(rel)
+            else:
+                entries.discard(rel)
+            section["projects"] = ", ".join(sorted(str(p) for p in entries))
+            _write_ini(cfg_path, cfg)
 
 
 if __name__ == "__main__":
