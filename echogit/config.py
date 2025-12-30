@@ -1,7 +1,7 @@
 """
 Configuration loader for Echogit.
 
-Handles projects_path, git_path, peers, plugins, and allowed_paths.
+Handles projects_path, git_path, peers, and allowed_paths.
 """
 
 import configparser
@@ -23,8 +23,6 @@ class Config:
         git_path: base folder for bare Git repos
         peers: list of peer hostnames
         peer_allowed_paths: mapping of peer→allowed subpaths
-        plugins: list of plugin names
-        plugin_dir: path to plugin directory
     """
 
     CONFIG_FILE = "$HOME/.config/echogit/config.ini"
@@ -38,30 +36,20 @@ class Config:
         git_path: Path | None,
         peers: List[str],
         peer_allowed_paths: dict[str, List[Path]],
-        plugins: List[str],
-        plugin_dir: str,
         auto_commit_projects: Set[Path],
-        ignore_peers_down: bool,
     ):
         self.projects_path = projects_path.expanduser().resolve()
         self.git_path = git_path.expanduser().resolve() if git_path else None
         self._all_peers = peers
         self.peer_allowed_paths = peer_allowed_paths
-        self.plugins = plugins
-        self.plugin_dir = plugin_dir
         self.auto_commit_projects = auto_commit_projects
-        self.ignore_peers_down = ignore_peers_down
 
     @cached_property
     def peers(self) -> List[str]:
         """
         Return only the peers we can actually reach over SSH.
         """
-        reachable = []
-        for peer in self._all_peers:
-            if is_peer_reachable(peer):
-                reachable.append(peer)
-        return reachable
+        return [peer for peer in self._all_peers if is_peer_reachable(peer)]
 
     @classmethod
     def get_config_peer(cls, peer_name: str) -> "Config | None":
@@ -82,20 +70,7 @@ class Config:
         """
         projects_path = Path(cfg.get("DEFAULT", "projects_path", fallback="~/echogit"))
         git_path = Path(cfg.get("DEFAULT", "git_path", fallback="~/echogit"))
-        plugins = [
-            p.strip()
-            for p in cfg.get("DEFAULT", "plugins", fallback="").split(",")
-            if p.strip()
-        ]
-        plugin_dir = cfg.get("DEFAULT", "plugin_dir", fallback="~/echogit/plugins/")
-        ignore_peers_down = cfg.getboolean(
-            "DEFAULT", "ignore_peers_down", fallback=False
-        )
-        peers = [
-            p.strip()
-            for p in cfg.get("PEERS", "peers", fallback="").split(",")
-            if p.strip()
-        ]
+        peers = _split_csv(cfg.get("PEERS", "peers", fallback=""))
 
         peer_allowed_paths = {}
         for peer in peers:
@@ -103,7 +78,7 @@ class Config:
             if not allowed:
                 continue
 
-            rel_list = [Path(p.strip()) for p in allowed.split(",")]
+            rel_list = [Path(p) for p in _split_csv(allowed)]
             peer_allowed_paths[peer] = [
                 (projects_path / Path(rel)).resolve() for rel in rel_list
             ]
@@ -113,7 +88,7 @@ class Config:
         if cfg.has_section("AUTOCOMMIT"):
             raw_list = cfg.get("AUTOCOMMIT", "projects", fallback="")
             # Each entry can be comma-separated or newline-separated
-            for item in raw_list.replace(",", "\n").splitlines():
+            for item in _split_lines(raw_list):
                 p = item.strip()
                 if not p:
                     continue
@@ -126,10 +101,7 @@ class Config:
             git_path=git_path,
             peers=peers,
             peer_allowed_paths=peer_allowed_paths,
-            plugins=plugins,
-            plugin_dir=plugin_dir,
             auto_commit_projects=auto_commit_projects,
-            ignore_peers_down=ignore_peers_down,
         )
 
     @classmethod
@@ -172,3 +144,11 @@ class Config:
             path.is_relative_to(self.projects_path / allowed)
             for allowed in allowed_paths
         )
+
+
+def _split_csv(raw: str) -> list[str]:
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def _split_lines(raw: str) -> list[str]:
+    return [item.strip() for item in raw.replace(",", "\n").splitlines() if item.strip()]

@@ -88,65 +88,13 @@ def main():
     _enable_color_logging()
 
     if args.command == "list":
-        projects = [
-            {"rel": str(proj.rel), "type": proj.type}
-            for proj in discover_local_projects(config.projects_path)
-        ]
-        if args.json:
-            print(json.dumps(projects))
-        else:
-            for proj in projects:
-                print(f"{proj['rel']} ({proj['type']})")
-
+        _handle_list(config, args.json)
     elif args.command == "list-remote":
-        remote = {}
-        for peer_name in config.peers:
-            remote[peer_name] = [
-                {"rel": str(proj.rel), "type": proj.type}
-                for proj in discover_remote_projects(peer_name)
-            ]
-        if args.json:
-            print(json.dumps(remote))
-        else:
-            for peer_name, projects in remote.items():
-                print(f"Projects on peer '{peer_name}':")
-                for proj in projects:
-                    print(f"  - {proj['rel']} ({proj['type']})")
-
+        _handle_list_remote(config, args.json)
     elif args.command == "sync":
-        path = Path(args.path or config.projects_path)
-        root_node = from_path(path, config=config)
-        root_node.scan()
-        if args.progress:
-            from echogit.sync.project_node import ProjectNode
-
-            def on_progress(node, ok):
-                if isinstance(node, ProjectNode):
-                    if args.status and node.is_dirty():
-                        status = "DIRTY"
-                    else:
-                        status = "OK" if ok else "ERR"
-                    line = f"{status} {node.relative_path}"
-                    print(_color_status(status, line))
-
-            success = root_node.sync(on_progress=on_progress)
-        else:
-            success = root_node.sync()
-        if success:
-            print("Sync OK")
-        else:
-            print("Sync failed")
-            sys.exit(1)
-
+        _handle_sync(config, args.path, args.progress, args.status)
     elif args.command == "config":
-        if not args.get and not args.set_values:
-            print("config: use -g or -s")
-            sys.exit(2)
-        if args.path:
-            _handle_project_config(config, args.path, args.get, args.set_values)
-        else:
-            _handle_global_config(args.get, args.set_values)
-
+        _handle_config(config, args.path, args.get, args.set_values)
     elif args.command == "tui":
         path = Path(args.path or config.projects_path)
         run_ui(path, config)
@@ -191,6 +139,75 @@ class _ColorFormatter(logging.Formatter):
         if not color:
             return msg
         return f"{color}{msg}\x1b[0m"
+
+
+def _handle_list(config: Config, as_json: bool) -> None:
+    projects = [
+        {"rel": str(proj.rel), "type": proj.type}
+        for proj in discover_local_projects(config.projects_path)
+    ]
+    if as_json:
+        print(json.dumps(projects))
+    else:
+        for proj in projects:
+            print(f"{proj['rel']} ({proj['type']})")
+
+
+def _handle_list_remote(config: Config, as_json: bool) -> None:
+    remote = {
+        peer_name: [
+            {"rel": str(proj.rel), "type": proj.type}
+            for proj in discover_remote_projects(peer_name)
+        ]
+        for peer_name in config.peers
+    }
+    if as_json:
+        print(json.dumps(remote))
+    else:
+        for peer_name, projects in remote.items():
+            print(f"Projects on peer '{peer_name}':")
+            for proj in projects:
+                print(f"  - {proj['rel']} ({proj['type']})")
+
+
+def _handle_sync(
+    config: Config, path: str | None, show_progress: bool, show_status: bool
+) -> None:
+    root = Path(path or config.projects_path)
+    root_node = from_path(root, config=config)
+    root_node.scan()
+    if show_progress:
+        from echogit.sync.project_node import ProjectNode
+
+        def on_progress(node, ok):
+            if isinstance(node, ProjectNode):
+                if show_status and node.is_dirty():
+                    status = "DIRTY"
+                else:
+                    status = "OK" if ok else "ERR"
+                line = f"{status} {node.relative_path}"
+                print(_color_status(status, line))
+
+        success = root_node.sync(on_progress=on_progress)
+    else:
+        success = root_node.sync()
+    if success:
+        print("Sync OK")
+    else:
+        print("Sync failed")
+        sys.exit(1)
+
+
+def _handle_config(
+    config: Config, path: str | None, do_get: bool, set_values: str | None
+) -> None:
+    if not do_get and not set_values:
+        print("config: use -g or -s")
+        sys.exit(2)
+    if path:
+        _handle_project_config(config, path, do_get, set_values)
+    else:
+        _handle_global_config(do_get, set_values)
 
 
 def _parse_kv_list(raw: str) -> dict[str, str]:
