@@ -3,6 +3,7 @@ entry point for Echogit, a program that help you sync your projects using git or
 """
 
 import argparse
+import json
 import logging
 import sys
 from pathlib import Path
@@ -22,8 +23,18 @@ def main():
     parser = argparse.ArgumentParser(description="Echogit CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    subparsers.add_parser("list", help="List local projects")
-    subparsers.add_parser("list-remote", help="List remote projects")
+    list_parser = subparsers.add_parser("list", help="List local projects")
+    list_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="print projects as JSON",
+    )
+    list_remote_parser = subparsers.add_parser("list-remote", help="List remote projects")
+    list_remote_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="print projects as JSON",
+    )
 
     sync_parser = subparsers.add_parser("sync", help="Sync local projects")
     sync_parser.add_argument("path", nargs="?", default=None)
@@ -77,14 +88,30 @@ def main():
     _enable_color_logging()
 
     if args.command == "list":
-        for proj in discover_local_projects(config.projects_path):
-            print(proj)
+        projects = [
+            {"rel": str(proj.rel), "type": proj.type}
+            for proj in discover_local_projects(config.projects_path)
+        ]
+        if args.json:
+            print(json.dumps(projects))
+        else:
+            for proj in projects:
+                print(f"{proj['rel']} ({proj['type']})")
 
     elif args.command == "list-remote":
+        remote = {}
         for peer_name in config.peers:
-            print(f"Projects on peer '{peer_name}':")
-            for proj in discover_remote_projects(peer_name):
-                print(f"  - {proj}")
+            remote[peer_name] = [
+                {"rel": str(proj.rel), "type": proj.type}
+                for proj in discover_remote_projects(peer_name)
+            ]
+        if args.json:
+            print(json.dumps(remote))
+        else:
+            for peer_name, projects in remote.items():
+                print(f"Projects on peer '{peer_name}':")
+                for proj in projects:
+                    print(f"  - {proj['rel']} ({proj['type']})")
 
     elif args.command == "sync":
         path = Path(args.path or config.projects_path)
