@@ -1,10 +1,18 @@
+from functools import cached_property
+from pathlib import Path
+
 from echogit.node import Node
 
 
 class ProjectNode(Node):
     sync_parallel = False
+
+    @cached_property
+    def git_path(self) -> Path:
+        raise NotImplementedError("ProjectNode has no git_path")
+
     def ensure_scanned(self, on_update=None) -> None:
-        if not self._scanned:
+        if not self.state.presence.scanned:
             self.scan(on_update=on_update)
 
     def begin_sync(self) -> int:
@@ -14,18 +22,18 @@ class ProjectNode(Node):
         return gen
 
     def get_icon(self) -> str:
-        return "📦" if self.exists_locally else "☁️"
+        return "📦" if self.state.presence.exists_locally else "☁️"
 
     def clone(self) -> bool:
         """
-        Try cloning this project’s bare‐repo from each host in self.remote_peers.
+        Try cloning this project’s bare‐repo from each peer node.
         Returns True on first success, False on overall failure.
         Logs stdout/stderr in self.log and last error in self.error.
         """
         for peer_node in self.children:
             success = peer_node.clone()
             if success:
-                self.exists_locally = True
+                self.state.presence.exists_locally = True
                 return True
         return False
 
@@ -33,9 +41,9 @@ class ProjectNode(Node):
         self.children.clear()
 
         # Remote project: nothing to do until the user decide to clone it
-        if self.exists_locally is False:
+        if self.state.presence.exists_locally is False:
             self.log("scan skipped: project not cloned")
-            self._scanned = True
+            self.state.presence.scanned = True
             return
 
         config = self.config
@@ -53,4 +61,4 @@ class ProjectNode(Node):
                 on_update(node=peer_node, increment=False)
 
         self.log(f"scan done: {len(self.children)} peer(s)")
-        self._scanned = True
+        self.state.presence.scanned = True

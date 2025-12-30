@@ -54,6 +54,14 @@ def _normalize(p: Path, sync_type: str) -> ProjectRef:
     return ProjectRef(rel=repo, type=sync_type)
 
 
+def _sync_type_for_path(p: Path) -> str | None:
+    if p.name == ".git" or p.suffix == ".git":
+        return "git"
+    if p.name == ".rsync" or p.suffix == ".rsync":
+        return "rsync"
+    return None
+
+
 def _build_find_cmd(root: Path) -> str:
     """
     Build a pruning find(1) command:
@@ -75,12 +83,8 @@ def _parse_find_output(lines: str, root: Path) -> Iterator[ProjectRef]:
     seen: Set[Path] = set()
     for line in lines.splitlines():
         p = Path(line.strip())
-        # Determine which pattern we matched (use name/suffix to avoid re-matching)
-        if p.name == ".git" or p.suffix == ".git":
-            sync_type = "git"
-        elif p.name == ".rsync" or p.suffix == ".rsync":
-            sync_type = "rsync"
-        else:
+        sync_type = _sync_type_for_path(p)
+        if sync_type is None:
             continue
 
         ref = _normalize(p, sync_type)
@@ -103,11 +107,8 @@ def discover_local_projects(root: Path) -> Iterator[ProjectRef]:
     seen: Set[Path] = set()
 
     def _maybe_ref(p: Path) -> ProjectRef | None:
-        if p.name == ".git" or p.suffix == ".git":
-            sync_type = "git"
-        elif p.name == ".rsync" or p.suffix == ".rsync":
-            sync_type = "rsync"
-        else:
+        sync_type = _sync_type_for_path(p)
+        if sync_type is None:
             return None
 
         ref = _normalize(p, sync_type)

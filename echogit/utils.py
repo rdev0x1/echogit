@@ -3,6 +3,7 @@ Utility functions for SSH commands and safe subprocess execution.
 """
 
 import logging
+import shlex
 import socket
 import subprocess
 
@@ -14,12 +15,18 @@ def _is_local_peer(peer_host: str) -> bool:
     fqdn = socket.getfqdn()
     if peer_host in {host, fqdn}:
         return True
-    try:
-        peer_ips = {addr[0] for addr in socket.getaddrinfo(peer_host, None)}
-        local_ips = {addr[0] for addr in socket.getaddrinfo(host, None)}
-        return bool(peer_ips & local_ips)
-    except socket.gaierror:
+    peer_ips = _resolve_ips(peer_host)
+    if not peer_ips:
         return False
+    local_ips = _resolve_ips(host)
+    return bool(peer_ips & local_ips)
+
+
+def _resolve_ips(host: str) -> set[str]:
+    try:
+        return {addr[0] for addr in socket.getaddrinfo(host, None)}
+    except socket.gaierror:
+        return set()
 
 
 def run_ssh_command(peer_host: str, command: str) -> tuple[bool, str]:
@@ -58,7 +65,8 @@ def safe_run_command(cmd: list[str], cwd: str | None = None) -> tuple[bool, str]
     :returns: (success, stdout or combined error)
     """
 
-    out = f"command: {' '.join(cmd)}"
+    cmd_str = " ".join(shlex.quote(part) for part in cmd)
+    out = f"command: {cmd_str}"
     try:
         result = subprocess.run(
             cmd, cwd=cwd, capture_output=True, text=True, check=True
@@ -70,5 +78,9 @@ def safe_run_command(cmd: list[str], cwd: str | None = None) -> tuple[bool, str]
 
     except subprocess.CalledProcessError as e:
         out += f"\nfailed\nSTDOUT:\n{e.stdout}\nSTDERR:\n{e.stderr}\n"
+        logging.error(out)
+        return False, out
+    except FileNotFoundError as e:
+        out += f"\nfailed\nSTDERR:\n{e}\n"
         logging.error(out)
         return False, out

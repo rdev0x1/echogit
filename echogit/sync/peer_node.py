@@ -1,4 +1,3 @@
-from functools import cached_property
 from pathlib import Path
 import threading
 
@@ -18,10 +17,6 @@ class PeerNode(Node):
 
     def get_icon(self) -> str:
         return "💻"
-
-    @cached_property
-    def git_path(self) -> Path:
-        return self.parent.git_path
 
     def get_clone_command(self, rel: Path, remote_base: Path) -> list[str]:
         raise NotImplementedError(
@@ -51,9 +46,6 @@ class PeerNode(Node):
 
         rconfig = Config.load_from_buffer(cfg_txt)
         remote_base = rconfig.git_path
-        if remote_base is None:
-            self.log("remote config missing git_path", True)
-            return False
 
         cmd = self.get_clone_command(rel, remote_base)
 

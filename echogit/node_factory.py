@@ -27,9 +27,8 @@ def from_path(
     else:
         cls = FolderNode
 
-    # pass exactly one of config or parent to Node.__init__
-    if parent is not None and config is None:
+    if (parent is None) == (config is None):
+        raise ValueError("Must pass exactly one of config or parent")
+    if parent is not None:
         return cls(path=p, parent=parent)
-    if config is not None and parent is None:
-        return cls(path=p, config=config)
-    raise ValueError("Must pass exactly one of config or parent")
+    return cls(path=p, config=config)

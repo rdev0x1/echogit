@@ -1,10 +1,42 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
 from typing import Iterator, List
 
 from echogit.config import Config
+
+
+@dataclass
+class NodeLogState:
+    lines: list[str] = field(default_factory=list)
+    has_error: bool = False
+
+
+@dataclass
+class NodeSyncState:
+    state: str = "unknown"
+    gen: int = 0
+    last_gen: int = -1
+    current_gen: int | None = None
+
+
+@dataclass
+class NodePresenceState:
+    exists_locally: bool = False
+    scanned: bool = False
+    collapse: bool = True
+    is_dirty: bool = False
+    remote_peers: list[str] = field(default_factory=list)
+
+
+@dataclass
+class NodeState:
+    log: NodeLogState = field(default_factory=NodeLogState)
+    sync: NodeSyncState = field(default_factory=NodeSyncState)
+    presence: NodePresenceState = field(default_factory=NodePresenceState)
 
 
 class Node:
@@ -14,7 +46,7 @@ class Node:
     """
 
     sync_parallel = True
-    SYNC_WORKERS = 16
+    SYNC_WORKERS = 4
 
     def __init__(
         self, path: Path, parent: Node | None = None, config: Config | None = None
@@ -26,17 +58,8 @@ class Node:
         self.name: str = self.path.name
         self.parent: Node | None = parent
         self.children: List[Node] = []
-        self._log_lines: list[str] = []
-        self._has_error: bool = False
-        self._is_dirty: bool = False
-        self._scanned: bool = False
-        self._sync_state: str = "unknown"
-        self._sync_gen: int = 0
-        self._last_sync_gen: int = -1
-        self._current_sync_gen: int | None = None
-        self.exists_locally: bool = self.path.exists()
-        self.collapse: bool = True
-        self.remote_peers = []
+        self.state = NodeState()
+        self.state.presence.exists_locally = self.path.exists()
 
         if config is not None:
             self.config = config
@@ -69,17 +92,10 @@ class Node:
         """
         Default scan method. Folder-type nodes override this.
         """
+        _ = on_update
         self.children.clear()
-        self._scanned = True
-        self._has_error = False
-
-    def scan_deep(self) -> None:
-        """
-        Scan this node and all descendants.
-        """
-        self.scan()
-        for child in list(self.children):
-            child.scan_deep()
+        self.state.presence.scanned = True
+        self.state.log.has_error = False
 
     def ensure_scanned_deep(self, on_update=None) -> None:
         """
@@ -90,35 +106,23 @@ class Node:
         for child in list(self.children):
             child.ensure_scanned_deep(on_update=on_update)
 
-    def get_collapse(self) -> bool:
-        """Return True if children has to be hidden"""
-        return self.collapse
-
-    def toggle_collapse(self) -> None:
-        """hide or show a node's children. Used by TUI"""
-        self.collapse = not self.collapse
-
     def ensure_scanned(self, on_update=None) -> None:
         """Optional hook for lazy child discovery."""
-        return
-
-    def get_logs(self) -> str:
-        """get logs. Used by TUI"""
-        return "\n".join(self._log_lines)
+        _ = on_update
 
     def log(self, msg: str, error: bool = False) -> None:
         """Append a non‐error log line."""
         level = "ERROR" if error else "INFO"
-        self._log_lines.append(f"{level}: {msg}")
+        self.state.log.lines.append(f"{level}: {msg}")
         if error:
-            self._has_error = True
+            self.state.log.has_error = True
 
     def has_error(self) -> bool:
         """
         Return true if this node had an error when executing a command, or if
         any child had an error.
         """
-        if self._has_error:
+        if self.state.log.has_error:
             return True
         return any(child.has_error() for child in list(self.children))
 
@@ -126,45 +130,43 @@ class Node:
         """
         Return True if this node represents a dirty working tree.
         """
-        return self._is_dirty
+        return self.state.presence.is_dirty
 
     def is_scanned(self) -> bool:
         """
         Return True if this node's scan has completed.
         """
-        return self._scanned
+        return self.state.presence.scanned
 
     def sync_state(self) -> str:
         """
         Return sync state: unknown, ok, or error.
         """
-        return self._sync_state
+        return self.state.sync.state
 
     def begin_sync(self) -> int:
         """
         Start a sync generation and return its id.
         """
-        self._sync_gen += 1
-        self._current_sync_gen = self._sync_gen
-        return self._sync_gen
+        self.state.sync.gen += 1
+        self.state.sync.current_gen = self.state.sync.gen
+        return self.state.sync.gen
 
     def mark_synced(self, gen: int, success: bool) -> None:
         """
         Record the result of a sync generation.
         """
-        self._last_sync_gen = gen
-        self._sync_state = "ok" if success else "error"
+        self.state.sync.last_gen = gen
+        self.state.sync.state = "ok" if success else "error"
 
     def sync(self, on_progress=None) -> bool:
         """
         sync a project using git or rsync.
         """
-        self._has_error = False
+        self.state.log.has_error = False
         success = True
         children = list(self.children)
         if self.sync_parallel and self.SYNC_WORKERS > 1 and len(children) > 1:
-            from concurrent.futures import ThreadPoolExecutor
-
             with ThreadPoolExecutor(max_workers=self.SYNC_WORKERS) as executor:
                 futures = [
                     executor.submit(child.sync, on_progress=on_progress)
@@ -174,15 +176,18 @@ class Node:
                     try:
                         if not future.result():
                             success = False
-                    except Exception:
+                    except Exception:  # pylint: disable=broad-exception-caught
                         success = False
         else:
             for child in children:
                 if not child.sync(on_progress=on_progress):
                     success = False
-        self._sync_state = "ok" if success else "error"
-        if self._current_sync_gen is not None:
-            self.mark_synced(self._current_sync_gen, success)
+        return self._finalize_sync(success, on_progress)
+
+    def _finalize_sync(self, success: bool, on_progress=None) -> bool:
+        self.state.sync.state = "ok" if success else "error"
+        if self.state.sync.current_gen is not None:
+            self.mark_synced(self.state.sync.current_gen, success)
         if on_progress:
             on_progress(self, success)
         return success
@@ -191,7 +196,17 @@ class Node:
         """
         Return True if this node has a sync result for the given generation.
         """
-        return self._last_sync_gen == gen
+        return self.state.sync.last_gen == gen
+
+    def skip_sync(self, on_progress=None) -> bool:
+        """
+        Skip sync without marking ok/error (used for unreachable peers).
+        """
+        self.state.sync.state = "unknown"
+        self.state.sync.current_gen = None
+        if on_progress:
+            on_progress(self, True)
+        return True
 
     def clone(self) -> bool:
         """
@@ -217,13 +232,14 @@ class Node:
 
         try:
             return self.path.relative_to(projects_root)
-        except Exception:
+        except ValueError:
             pass
 
-        try:
-            return self.path.relative_to(git_root)
-        except Exception:
-            pass
+        if git_root is not None:
+            try:
+                return self.path.relative_to(git_root)
+            except ValueError:
+                pass
 
         raise ValueError(
             f"Node path {self.path!r} is not under "

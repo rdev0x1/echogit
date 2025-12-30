@@ -13,6 +13,7 @@ class GitPeerNode(PeerNode):
     Represents one remote peer under a Git project.
     We’ll list all remote branches and make one BranchNode each.
     """
+    sync_parallel = False
     defer_scan = True
 
     def __init__(self, *args, **kwargs):
@@ -43,14 +44,13 @@ class GitPeerNode(PeerNode):
                 on_update(node=child, increment=False)
         self.log(f"scan done: {len(self.children)} branch(es)")
         self._branches_loaded = True
-        self._scanned = True
+        self.state.presence.scanned = True
 
     def ensure_scanned(self, on_update=None) -> None:
         if not self._branches_loaded:
             self.scan(on_update=on_update)
 
     def _fetch_remote_branches(self) -> list[str]:
-
         cmd = ["git", "-C", str(self.path), "branch"]
 
         success, out = safe_run_command(cmd)
@@ -60,29 +60,32 @@ class GitPeerNode(PeerNode):
             return []
 
         # Parse branch names from stdout
-        branches: list[str] = []
-        for line in out.splitlines():
-            name = line.strip().lstrip("* ").strip()
-            if name:
-                branches.append(name)
-
-        return branches
+        return [
+            name
+            for line in out.splitlines()
+            if (name := line.strip().lstrip("* ").strip())
+        ]
 
     def sync(self, on_progress=None) -> bool:
         lock = self._get_peer_lock(self.name)
-        lock.acquire()
-        try:
-
+        with lock:
             # If this project is not cloned, then there is nothing to sync
-            if not self.exists_locally:
+            if not self.state.presence.exists_locally:
                 return True
 
             remote = self.name
-            rconfig = Config.get_config_peer(remote)
-            if _is_local_peer(remote):
-                desired_url = str(self.git_path)
-            else:
-                desired_url = f"ssh://{remote}:{str(self.git_path)}"
+            try:
+                desired_url = (
+                    str(self.git_path)
+                    if _is_local_peer(remote)
+                    else f"ssh://{remote}:{self.git_path}"
+                )
+            except ValueError as e:
+                if self.config.ignore_peers_down:
+                    self.log(f"peer '{remote}' unreachable; skipping sync", False)
+                    return self.skip_sync(on_progress)
+                self.log(str(e), True)
+                return self._finalize_sync(False, on_progress)
             path = str(self.path)
 
             # Check if the remote already exists and what URL it has
@@ -110,18 +113,13 @@ class GitPeerNode(PeerNode):
                 success, out = safe_run_command(cmd, cwd=path)
                 self.log(out, not success)
                 if not success:
-                    self._sync_state = "error"
-                    if self._current_sync_gen is not None:
-                        self.mark_synced(self._current_sync_gen, False)
-                    return False
+                    if self.config.ignore_peers_down:
+                        self.log(f"peer '{remote}' unreachable; skipping sync", False)
+                        return self.skip_sync(on_progress)
+                    return self._finalize_sync(False, on_progress)
 
             success = super().sync(on_progress=on_progress)
-            self._sync_state = "ok" if success else "error"
-            if self._current_sync_gen is not None:
-                self.mark_synced(self._current_sync_gen, success)
-            return success
-        finally:
-            lock.release()
+            return self._finalize_sync(success, on_progress)
 
     def begin_sync(self) -> int:
         gen = super().begin_sync()

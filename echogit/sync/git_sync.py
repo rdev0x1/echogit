@@ -30,7 +30,8 @@ class GitProjectNode(ProjectNode):
             return
 
         # Fast path: check tracked changes only to keep TUI responsive.
-        cmd = ["git", "-C", str(self.path), "status", "--porcelain=v1", "-uno"]
+        path_str = str(self.path)
+        cmd = ["git", "-C", path_str, "status", "--porcelain=v1", "-uno"]
         success, out = safe_run_command(cmd)
         if success:
             self.state.presence.is_dirty = bool(out.strip())
@@ -39,7 +40,7 @@ class GitProjectNode(ProjectNode):
                 untracked_cmd = [
                     "git",
                     "-C",
-                    str(self.path),
+                    path_str,
                     "ls-files",
                     "--others",
                     "--exclude-standard",
