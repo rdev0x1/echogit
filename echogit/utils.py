@@ -29,7 +29,12 @@ def _resolve_ips(host: str) -> set[str]:
         return set()
 
 
-def run_ssh_command(peer_host: str, command: str) -> tuple[bool, str]:
+def run_ssh_command(
+    peer_host: str,
+    command: str,
+    timeout: int | None = None,
+    batch_mode: bool = False,
+) -> tuple[bool, str]:
     """
     Run a command on a remote host via SSH.
 
@@ -39,7 +44,12 @@ def run_ssh_command(peer_host: str, command: str) -> tuple[bool, str]:
     """
     if _is_local_peer(peer_host):
         return safe_run_command(["bash", "-lc", command])
-    ssh_command = ["ssh", peer_host, command]
+    ssh_command = ["ssh"]
+    if batch_mode:
+        ssh_command.extend(["-o", "BatchMode=yes"])
+    if timeout is not None:
+        ssh_command.extend(["-o", f"ConnectTimeout={timeout}"])
+    ssh_command.extend([peer_host, command])
     return safe_run_command(ssh_command)
 
 

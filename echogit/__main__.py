@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 import configparser
 import os
+from concurrent.futures import ThreadPoolExecutor
 
 from echogit.config import Config
 from echogit.discovery import discover_local_projects, discover_remote_projects
@@ -155,13 +156,26 @@ def _handle_list(config: Config, as_json: bool) -> None:
 
 
 def _handle_list_remote(config: Config, as_json: bool) -> None:
-    remote = {
-        peer_name: [
+    def _collect_remote(peer_name: str) -> list[dict[str, str]]:
+        return [
             {"rel": str(proj.rel), "type": proj.type}
             for proj in discover_remote_projects(peer_name)
         ]
-        for peer_name in config.peers
-    }
+
+    peers = list(config.peers)
+    if not peers:
+        remote = {}
+    else:
+        max_workers = min(4, len(peers))
+        remote = {}
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {peer: executor.submit(_collect_remote, peer) for peer in peers}
+            for peer in peers:
+                try:
+                    remote[peer] = futures[peer].result()
+                except Exception as exc:  # pylint: disable=broad-exception-caught
+                    logging.error("list-remote failed for %s: %s", peer, exc)
+                    remote[peer] = []
     if as_json:
         print(json.dumps(remote))
     else:

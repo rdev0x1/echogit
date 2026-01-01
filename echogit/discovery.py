@@ -3,9 +3,9 @@ parse a local or remote folder and find all available projects.
 Skips any subtree that contains a '.echogitskip' marker file.
 """
 
-from dataclasses import dataclass
 import os
 from pathlib import Path
+from dataclasses import dataclass
 from typing import Iterator, Set
 import shlex
 
@@ -35,6 +35,9 @@ _PATTERNS = {
     "*.rsync": "rsync",
     ".rsync": "rsync",
 }
+
+
+REMOTE_DISCOVERY_TIMEOUT = 3
 
 
 def _normalize(p: Path, sync_type: str) -> ProjectRef:
@@ -172,7 +175,7 @@ def discover_remote_projects_under(peer: str, subdir: Path) -> Iterator[ProjectR
     root = rconfig.git_path
     base = root / subdir
     cmd = _build_find_cmd(base)
-    success, out = run_ssh_command(peer, cmd)
+    success, out = run_ssh_command(peer, cmd, timeout=REMOTE_DISCOVERY_TIMEOUT)
     if not success:
         return
     yield from _parse_find_output(out, root)
