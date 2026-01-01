@@ -10,6 +10,8 @@ class GitProjectNode(ProjectNode):
 
     @cached_property
     def git_path(self) -> Path:
+        if self.config.git_path is None:
+            raise ValueError("git_path is not configured")
         rel = self.relative_path
         return (self.config.git_path / rel).with_suffix(".git")
 

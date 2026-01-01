@@ -37,18 +37,22 @@ class Config:
         peers: List[str],
         peer_allowed_paths: dict[str, List[Path]],
         auto_commit_projects: Set[Path],
+        ignore_peers_down: bool,
     ):
         self.projects_path = projects_path.expanduser().resolve()
         self.git_path = git_path.expanduser().resolve() if git_path else None
         self._all_peers = peers
         self.peer_allowed_paths = peer_allowed_paths
         self.auto_commit_projects = auto_commit_projects
+        self.ignore_peers_down = ignore_peers_down
 
     @cached_property
     def peers(self) -> List[str]:
         """
         Return only the peers we can actually reach over SSH.
         """
+        if self.ignore_peers_down:
+            return list(self._all_peers)
         return [peer for peer in self._all_peers if is_peer_reachable(peer)]
 
     @classmethod
@@ -96,12 +100,17 @@ class Config:
                 rel = Path(p)
                 auto_commit_projects.add(rel)
 
+        ignore_peers_down = cfg.getboolean(
+            "DEFAULT", "ignore_peers_down", fallback=False
+        )
+
         return cls(
             projects_path=projects_path,
             git_path=git_path,
             peers=peers,
             peer_allowed_paths=peer_allowed_paths,
             auto_commit_projects=auto_commit_projects,
+            ignore_peers_down=ignore_peers_down,
         )
 
     @classmethod

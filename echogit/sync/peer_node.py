@@ -46,6 +46,9 @@ class PeerNode(Node):
 
         rconfig = Config.load_from_buffer(cfg_txt)
         remote_base = rconfig.git_path
+        if remote_base is None:
+            self.log("remote config missing git_path", True)
+            return False
 
         cmd = self.get_clone_command(rel, remote_base)
 

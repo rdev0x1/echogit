@@ -13,7 +13,6 @@ class GitPeerNode(PeerNode):
     Represents one remote peer under a Git project.
     We’ll list all remote branches and make one BranchNode each.
     """
-    sync_parallel = False
     defer_scan = True
 
     def __init__(self, *args, **kwargs):
@@ -81,9 +80,6 @@ class GitPeerNode(PeerNode):
                     else f"ssh://{remote}:{self.git_path}"
                 )
             except ValueError as e:
-                if self.config.ignore_peers_down:
-                    self.log(f"peer '{remote}' unreachable; skipping sync", False)
-                    return self.skip_sync(on_progress)
                 self.log(str(e), True)
                 return self._finalize_sync(False, on_progress)
             path = str(self.path)
@@ -113,13 +109,9 @@ class GitPeerNode(PeerNode):
                 success, out = safe_run_command(cmd, cwd=path)
                 self.log(out, not success)
                 if not success:
-                    if self.config.ignore_peers_down:
-                        self.log(f"peer '{remote}' unreachable; skipping sync", False)
-                        return self.skip_sync(on_progress)
                     return self._finalize_sync(False, on_progress)
 
-            success = super().sync(on_progress=on_progress)
-            return self._finalize_sync(success, on_progress)
+            return super().sync(on_progress=on_progress)
 
     def begin_sync(self) -> int:
         gen = super().begin_sync()
