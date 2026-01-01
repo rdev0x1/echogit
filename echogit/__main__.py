@@ -13,6 +13,7 @@ import os
 from echogit.config import Config
 from echogit.discovery import discover_local_projects, discover_remote_projects
 from echogit.node_factory import from_path
+from echogit.sync.project_node import ProjectNode
 from echogit.tui import run_ui
 
 
@@ -177,8 +178,6 @@ def _handle_sync(
     root_node = from_path(root, config=config)
     root_node.scan()
     if show_progress:
-        from echogit.sync.project_node import ProjectNode
-
         def on_progress(node, ok):
             if isinstance(node, ProjectNode):
                 if show_status and node.is_dirty():

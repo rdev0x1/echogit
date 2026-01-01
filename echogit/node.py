@@ -4,7 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
-from typing import Iterator, List
+from typing import List
 
 from echogit.config import Config
 
@@ -213,14 +213,6 @@ class Node:
         clone a project using git clone or rsync.
         """
         return False
-
-    def walk(self) -> Iterator[Node]:
-        """
-        Yield self and recursively yield all descendants.
-        """
-        yield self
-        for child in self.children:
-            yield from child.walk()
 
     @cached_property
     def relative_path(self) -> Path:
