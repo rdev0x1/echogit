@@ -135,6 +135,15 @@ def discover_local_projects(root: Path) -> Iterator[ProjectRef]:
             dirnames[:] = []
             continue
 
+        # If current is a worktree (has .git/.rsync child), yield and prune.
+        if ".git" in dirnames or ".rsync" in dirnames:
+            marker = ".git" if ".git" in dirnames else ".rsync"
+            ref = _maybe_ref(current / marker)
+            if ref is not None:
+                yield ref
+            dirnames[:] = []
+            continue
+
         # Prune repo dirs and skip-marked dirs; yield repos immediately.
         for name in list(dirnames):
             child = current / name
