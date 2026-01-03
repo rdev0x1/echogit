@@ -10,6 +10,7 @@ from pathlib import Path
 import configparser
 import os
 from concurrent.futures import ThreadPoolExecutor
+import time
 
 from echogit.config import Config
 from echogit.discovery import discover_local_projects, discover_remote_projects
@@ -31,11 +32,23 @@ def main():
         action="store_true",
         help="print projects as JSON",
     )
+    list_parser.add_argument(
+        "--cache-ttl",
+        type=int,
+        default=30,
+        help="cache results for N seconds (0 disables cache)",
+    )
     list_remote_parser = subparsers.add_parser("list-remote", help="List remote projects")
     list_remote_parser.add_argument(
         "--json",
         action="store_true",
         help="print projects as JSON",
+    )
+    list_remote_parser.add_argument(
+        "--cache-ttl",
+        type=int,
+        default=30,
+        help="cache results for N seconds (0 disables cache)",
     )
 
     sync_parser = subparsers.add_parser("sync", help="Sync local projects")
@@ -90,9 +103,9 @@ def main():
     _enable_color_logging()
 
     if args.command == "list":
-        _handle_list(config, args.json)
+        _handle_list(config, args.json, args.cache_ttl)
     elif args.command == "list-remote":
-        _handle_list_remote(config, args.json)
+        _handle_list_remote(config, args.json, args.cache_ttl)
     elif args.command == "sync":
         _handle_sync(config, args.path, args.progress, args.status)
     elif args.command == "config":
@@ -143,26 +156,44 @@ class _ColorFormatter(logging.Formatter):
         return f"{color}{msg}\x1b[0m"
 
 
-def _handle_list(config: Config, as_json: bool) -> None:
+def _handle_list(config: Config, as_json: bool, cache_ttl: int) -> None:
+    cache_path = _cache_path("list.json")
+    if cache_ttl > 0:
+        cached = _load_cache(cache_path, cache_ttl)
+        if cached and cached.get("projects_path") == str(config.projects_path):
+            _print_list_output(cached.get("data", []), as_json)
+            return
+
     projects = [
         {"rel": str(proj.rel), "type": proj.type}
         for proj in discover_local_projects(config.projects_path)
     ]
-    if as_json:
-        print(json.dumps(projects))
-    else:
-        for proj in projects:
-            print(f"{proj['rel']} ({proj['type']})")
+    if cache_ttl > 0:
+        _write_cache(
+            cache_path,
+            {
+                "projects_path": str(config.projects_path),
+                "data": projects,
+            },
+        )
+    _print_list_output(projects, as_json)
 
 
-def _handle_list_remote(config: Config, as_json: bool) -> None:
+def _handle_list_remote(config: Config, as_json: bool, cache_ttl: int) -> None:
+    cache_path = _cache_path("list-remote.json")
+    peers = list(config.peers)
+    if cache_ttl > 0:
+        cached = _load_cache(cache_path, cache_ttl)
+        if cached and cached.get("peers") == peers:
+            _print_list_remote_output(cached.get("data", {}), as_json)
+            return
+
     def _collect_remote(peer_name: str) -> list[dict[str, str]]:
         return [
             {"rel": str(proj.rel), "type": proj.type}
             for proj in discover_remote_projects(peer_name)
         ]
 
-    peers = list(config.peers)
     if not peers:
         remote = {}
     else:
@@ -176,6 +207,22 @@ def _handle_list_remote(config: Config, as_json: bool) -> None:
                 except Exception as exc:  # pylint: disable=broad-exception-caught
                     logging.error("list-remote failed for %s: %s", peer, exc)
                     remote[peer] = []
+    if cache_ttl > 0:
+        _write_cache(cache_path, {"peers": peers, "data": remote})
+    _print_list_remote_output(remote, as_json)
+
+
+def _print_list_output(projects: list[dict[str, str]], as_json: bool) -> None:
+    if as_json:
+        print(json.dumps(projects))
+    else:
+        for proj in projects:
+            print(f"{proj['rel']} ({proj['type']})")
+
+
+def _print_list_remote_output(
+    remote: dict[str, list[dict[str, str]]], as_json: bool
+) -> None:
     if as_json:
         print(json.dumps(remote))
     else:
@@ -183,6 +230,34 @@ def _handle_list_remote(config: Config, as_json: bool) -> None:
             print(f"Projects on peer '{peer_name}':")
             for proj in projects:
                 print(f"  - {proj['rel']} ({proj['type']})")
+
+
+def _cache_path(name: str) -> Path:
+    base = os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache"))
+    return Path(base) / "echogit" / name
+
+
+def _load_cache(path: Path, ttl: int) -> dict | None:
+    try:
+        if not path.is_file():
+            return None
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    created = payload.get("created")
+    if created is None or time.time() - created > ttl:
+        return None
+    return payload
+
+
+def _write_cache(path: Path, payload: dict) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = dict(payload)
+        payload["created"] = time.time()
+        path.write_text(json.dumps(payload), encoding="utf-8")
+    except OSError:
+        logging.debug("cache write failed for %s", path)
 
 
 def _handle_sync(
