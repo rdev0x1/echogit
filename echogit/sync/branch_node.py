@@ -194,16 +194,16 @@ class BranchNode(Node):
                 return self._fail_sync(path, original_branch, on_progress)
 
             # If refs already match, avoid checkout to preserve local changes.
+            # Still continue so auto-commit + push can run.
             if self._refs_match(path, local_ref, remote_ref):
                 self.log("local and remote refs match; skipping checkout", False)
-                return self._finish_sync(True, path, original_branch, on_progress)
+            else:
+                # Checkout or create a local branch that tracks the remote branch
+                if not self._checkout_or_create(path, remote, branch):
+                    return self._fail_sync(path, original_branch, on_progress)
 
-            # Checkout or create a local branch that tracks the remote branch
-            if not self._checkout_or_create(path, remote, branch):
-                return self._fail_sync(path, original_branch, on_progress)
-
-            if not self._fast_forward(path, local_ref, remote_ref):
-                return self._fail_sync(path, original_branch, on_progress)
+                if not self._fast_forward(path, local_ref, remote_ref):
+                    return self._fail_sync(path, original_branch, on_progress)
         else:
             # Remote branch not found; skip pulling
             self.log(f"Remote branch {remote}/{branch} not found; skipping pull", False)
