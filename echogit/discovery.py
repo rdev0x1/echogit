@@ -3,6 +3,8 @@ parse a local or remote folder and find all available projects.
 Skips any subtree that contains a '.echogitskip' marker file.
 """
 
+from __future__ import annotations
+
 import os
 from pathlib import Path
 from dataclasses import dataclass

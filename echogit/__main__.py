@@ -2,6 +2,8 @@
 entry point for Echogit, a program that help you sync your projects using git or rsync.
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import logging

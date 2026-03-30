@@ -2,6 +2,8 @@
 Utility functions for SSH commands and safe subprocess execution.
 """
 
+from __future__ import annotations
+
 import logging
 import shlex
 import socket

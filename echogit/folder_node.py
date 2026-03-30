@@ -3,6 +3,8 @@ FolderNode: scans directories for Git/Rsync projects or subfolders.
 Uses class-level caches to avoid redundant discovery.
 """
 
+from __future__ import annotations
+
 from concurrent.futures import ThreadPoolExecutor
 from functools import cached_property
 import threading

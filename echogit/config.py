@@ -4,6 +4,8 @@ Configuration loader for Echogit.
 Handles projects_path, git_path, peers, and allowed_paths.
 """
 
+from __future__ import annotations
+
 import configparser
 import os
 from functools import cached_property
