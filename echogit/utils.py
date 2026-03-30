@@ -6,6 +6,7 @@ import logging
 import shlex
 import socket
 import subprocess
+from typing import Set
 
 
 def _is_local_peer(peer_host: str) -> bool:
@@ -22,7 +23,7 @@ def _is_local_peer(peer_host: str) -> bool:
     return bool(peer_ips & local_ips)
 
 
-def _resolve_ips(host: str) -> set[str]:
+def _resolve_ips(host: str) -> Set[str]:
     try:
         return {addr[0] for addr in socket.getaddrinfo(host, None)}
     except socket.gaierror:
