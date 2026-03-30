@@ -38,9 +38,22 @@ class Config:
         peer_allowed_paths: dict[str, List[Path]],
         auto_commit_projects: Set[Path],
         ignore_peers_down: bool,
+        *,
+        expand_paths: bool = True,
+        home_dir: Path | None = None,
     ):
-        self.projects_path = projects_path.expanduser().resolve()
-        self.git_path = git_path.expanduser().resolve() if git_path else None
+        if expand_paths:
+            if home_dir is None:
+                self.projects_path = projects_path.expanduser().resolve()
+                self.git_path = git_path.expanduser().resolve() if git_path else None
+            else:
+                self.projects_path = _expand_path_for_home(projects_path, home_dir)
+                self.git_path = (
+                    _expand_path_for_home(git_path, home_dir) if git_path else None
+                )
+        else:
+            self.projects_path = projects_path
+            self.git_path = git_path
         self._all_peers = peers
         self.peer_allowed_paths = peer_allowed_paths
         self.auto_commit_projects = auto_commit_projects
@@ -63,12 +76,27 @@ class Config:
         success, cfg_txt = run_ssh_command(peer_name, f"cat {Config.CONFIG_FILE}")
         if not success:
             return None
-        rconfig = Config.load_from_buffer(cfg_txt)
+        home_dir = None
+        home_success, home_out = run_ssh_command(peer_name, "printf '%s' \"$HOME\"")
+        if home_success and home_out.strip():
+            home_dir = Path(home_out.strip())
+        if home_dir is None:
+            rconfig = Config.load_from_buffer(cfg_txt, expand_paths=False)
+        else:
+            rconfig = Config.load_from_buffer(
+                cfg_txt, expand_paths=True, home_dir=home_dir
+            )
         cls.config_peers[peer_name] = rconfig
         return rconfig
 
     @classmethod
-    def _load(cls, cfg: configparser.ConfigParser) -> "Config":
+    def _load(
+        cls,
+        cfg: configparser.ConfigParser,
+        *,
+        expand_paths: bool = True,
+        home_dir: Path | None = None,
+    ) -> "Config":
         """
         Parse a ConfigParser into a Config instance.
         """
@@ -111,6 +139,8 @@ class Config:
             peer_allowed_paths=peer_allowed_paths,
             auto_commit_projects=auto_commit_projects,
             ignore_peers_down=ignore_peers_down,
+            expand_paths=expand_paths,
+            home_dir=home_dir,
         )
 
     @classmethod
@@ -129,7 +159,13 @@ class Config:
         return Config._load(cfg)
 
     @classmethod
-    def load_from_buffer(cls, config_string: str) -> "Config":
+    def load_from_buffer(
+        cls,
+        config_string: str,
+        *,
+        expand_paths: bool = True,
+        home_dir: Path | None = None,
+    ) -> "Config":
         """
         Load configuration from a string buffer.
 
@@ -140,7 +176,7 @@ class Config:
         config_buffer = StringIO(config_string)
         cfg.read_file(config_buffer)
 
-        return Config._load(cfg)
+        return Config._load(cfg, expand_paths=expand_paths, home_dir=home_dir)
 
     def is_path_allowed(self, peer_name: str, path: Path) -> bool:
         """
@@ -161,3 +197,15 @@ def _split_csv(raw: str) -> list[str]:
 
 def _split_lines(raw: str) -> list[str]:
     return [item.strip() for item in raw.replace(",", "\n").splitlines() if item.strip()]
+
+
+def _expand_path_for_home(raw: Path, home_dir: Path) -> Path:
+    raw_str = str(raw)
+    if raw_str == "~":
+        raw_str = str(home_dir)
+    elif raw_str.startswith("~/"):
+        raw_str = str(home_dir / raw_str[2:])
+    p = Path(raw_str)
+    if not p.is_absolute():
+        p = home_dir / p
+    return p
