@@ -38,13 +38,11 @@ class PeerNode(Node):
 
         host = self.name
 
-        # fetch that host’s config.ini
-        success, cfg_txt = run_ssh_command(host, f"cat {Config.CONFIG_FILE}")
-        self.log(cfg_txt, not success)
-        if not success:
+        # fetch that host’s config.ini (use remote-aware path expansion)
+        rconfig = Config.get_config_peer(host)
+        if rconfig is None:
+            self.log(f"failed to read remote config for {host}", True)
             return False
-
-        rconfig = Config.load_from_buffer(cfg_txt)
         remote_base = rconfig.git_path
         if remote_base is None:
             self.log("remote config missing git_path", True)
