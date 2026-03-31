@@ -1,16 +1,17 @@
 """
 FolderNode: scans directories for Git/Rsync projects or subfolders.
-Uses class-level caches to avoid redundant discovery.
+Uses per-tree scan context to avoid redundant discovery.
 """
 
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 from functools import cached_property
 import threading
 import time
 from pathlib import Path
-from typing import Dict, Iterator, Set
+from typing import Iterator
 
 from echogit.discovery import (
     ProjectRef,
@@ -22,6 +23,15 @@ from echogit.sync.git_sync import GitProjectNode
 from echogit.sync.rsync_sync import RsyncProjectNode
 
 
+@dataclass
+class FolderScanContext:
+    remote_cache: dict[tuple[str, Path], tuple[float, set[ProjectRef]]] = field(
+        default_factory=dict
+    )
+    local_cache: set[ProjectRef] = field(default_factory=set)
+    node_by_relpath: dict[Path, Node] = field(default_factory=dict)
+
+
 class FolderNode(Node):
     """
     A container node that scans its directory for:
@@ -29,10 +39,7 @@ class FolderNode(Node):
       - Ordinary sub-folders       → FolderNode
     """
 
-    # cache remote listings (per peer) and local listing (once)
-    _remote_cache: Dict[tuple[str, Path], tuple[float, Set[ProjectRef]]] = {}
-    _local_cache: Set[ProjectRef] = set()
-    node_by_relpath: Dict[Path, Node] = {}
+    # Guards the per-tree scan context while scans run in worker threads.
     _index_lock = threading.Lock()
     _cache_lock = threading.Lock()
 
@@ -43,6 +50,10 @@ class FolderNode(Node):
 
     def __init__(self, path: Path, **kwargs):
         super().__init__(path, **kwargs)
+        parent_context = getattr(self.parent, "_scan_context", None)
+        self._scan_context = (
+            parent_context if parent_context is not None else FolderScanContext()
+        )
         self._remote_loaded = False
 
     @cached_property
@@ -93,7 +104,7 @@ class FolderNode(Node):
             self.state.presence.scanned = True
             return None
         with FolderNode._index_lock:
-            FolderNode.node_by_relpath[rel_self] = self
+            self._scan_context.node_by_relpath[rel_self] = self
         return rel_self
 
     def _scan_local_children(self, on_update=None) -> list[Node]:
@@ -124,7 +135,7 @@ class FolderNode(Node):
 
     def _reuse_existing_node(self, child_rel: Path, on_update=None) -> Node | None:
         with FolderNode._index_lock:
-            existing = FolderNode.node_by_relpath.get(child_rel)
+            existing = self._scan_context.node_by_relpath.get(child_rel)
         if existing is None:
             return None
         existing.parent = self
@@ -147,7 +158,7 @@ class FolderNode(Node):
         if on_update:
             on_update(node=node)
         with FolderNode._index_lock:
-            FolderNode.node_by_relpath[child_rel] = node
+            self._scan_context.node_by_relpath[child_rel] = node
 
     def _scan_children(self, scan_targets: list[Node], on_update=None) -> None:
         if not scan_targets:
@@ -173,12 +184,12 @@ class FolderNode(Node):
     def _add_local_projects_from_cache(
         self, data_root: Path, on_update=None
     ) -> None:
-        if not FolderNode._local_cache:
+        if not self._scan_context.local_cache:
             if on_update:
                 on_update(status="Indexing cache...", increment=False, force=True)
             for ref in discover_local_projects(self.path):
                 with FolderNode._cache_lock:
-                    FolderNode._local_cache.add(ref)
+                    self._scan_context.local_cache.add(ref)
                 self._add_project_from_cache(
                     ref, data_root, on_update=on_update
                 )
@@ -219,7 +230,10 @@ class FolderNode(Node):
         """
 
         with FolderNode._index_lock:
-            if rel_path == Path(".") or rel_path in FolderNode.node_by_relpath:
+            if (
+                rel_path == Path(".")
+                or rel_path in self._scan_context.node_by_relpath
+            ):
                 return True
 
         ret = self._ensure_parents(rel_path.parent, data_root, on_update=on_update)
@@ -227,7 +241,7 @@ class FolderNode(Node):
             return False
 
         with FolderNode._index_lock:
-            parent_node = FolderNode.node_by_relpath[rel_path.parent]
+            parent_node = self._scan_context.node_by_relpath[rel_path.parent]
 
         # Only create childs node under folder node. We dont want childs under
         # projects node.
@@ -241,7 +255,7 @@ class FolderNode(Node):
         node.state.presence.scanned = True
         parent_node.add_child(node)
         with FolderNode._index_lock:
-            FolderNode.node_by_relpath[rel_path] = node
+            self._scan_context.node_by_relpath[rel_path] = node
         if on_update:
             on_update(node=node, increment=False)
         return True
@@ -250,7 +264,7 @@ class FolderNode(Node):
         self, ref: ProjectRef, data_root: Path, on_update=None
     ) -> None:
         with FolderNode._index_lock:
-            if ref.rel in FolderNode.node_by_relpath:
+            if ref.rel in self._scan_context.node_by_relpath:
                 return  # Already exists locally
 
         # process only subfolders of data_root
@@ -263,7 +277,7 @@ class FolderNode(Node):
             return
 
         with FolderNode._index_lock:
-            parent_node = FolderNode.node_by_relpath[ref.rel.parent]
+            parent_node = self._scan_context.node_by_relpath[ref.rel.parent]
         abs_path = (self.config.projects_path / ref.rel).resolve()
 
         if ref.type == "git":
@@ -280,7 +294,7 @@ class FolderNode(Node):
             on_update(node=node)
         node.scan(on_update=on_update)
         with FolderNode._index_lock:
-            FolderNode.node_by_relpath[ref.rel] = node
+            self._scan_context.node_by_relpath[ref.rel] = node
 
     def _load_remote_projects_for_node(self, on_update=None) -> None:
         data_root = self._rel_from_roots(self.path)
@@ -299,13 +313,13 @@ class FolderNode(Node):
         for peer in self.config.peers:
             cache_key = (peer, data_root)
             with FolderNode._cache_lock:
-                cached = FolderNode._remote_cache.get(cache_key)
+                cached = self._scan_context.remote_cache.get(cache_key)
             now = time.monotonic()
             if cached is None or now - cached[0] > self.REMOTE_CACHE_TTL:
                 refs = set(discover_remote_projects_under(peer, data_root))
                 with FolderNode._cache_lock:
-                    FolderNode._remote_cache[cache_key] = (now, refs)
-                    cached = FolderNode._remote_cache[cache_key]
+                    self._scan_context.remote_cache[cache_key] = (now, refs)
+                    cached = self._scan_context.remote_cache[cache_key]
             for ref in cached[1]:
                 self._add_project_from_cache(ref, data_root, on_update=on_update)
 
