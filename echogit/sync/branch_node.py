@@ -178,6 +178,7 @@ class BranchNode(Node):
         remote = self.peer_name
         path = str(self.path)
         branch = self.name
+        auto_commit_enabled = self.relative_path in self.config.auto_commit_projects
 
         # Remember current branch to restore later
         original_branch = self._current_branch(path)
@@ -211,7 +212,11 @@ class BranchNode(Node):
             self.log(f"Remote branch {remote}/{branch} not found; skipping pull", False)
 
         # Auto-commit, if project configured for auto-commit
-        if self.relative_path in self.config.auto_commit_projects:
+        if auto_commit_enabled:
+            current_branch = self._current_branch(path)
+            if current_branch != branch:
+                if not self._checkout_or_create(path, remote, branch):
+                    return self._fail_sync(path, original_branch, on_progress)
             if not self._auto_commit(path, original_branch, on_progress):
                 return False
 
