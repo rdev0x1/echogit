@@ -57,7 +57,18 @@ class Config:
             self.projects_path = projects_path
             self.git_path = git_path
         self._all_peers = peers
-        self.peer_allowed_paths = peer_allowed_paths
+        self.peer_allowed_paths = {
+            peer: [
+                _normalize_allowed_path(
+                    allowed,
+                    self.projects_path,
+                    expand_paths,
+                    home_dir,
+                )
+                for allowed in allowed_list
+            ]
+            for peer, allowed_list in peer_allowed_paths.items()
+        }
         self.auto_commit_projects = auto_commit_projects
         self.ignore_peers_down = ignore_peers_down
 
@@ -112,10 +123,7 @@ class Config:
             if not allowed:
                 continue
 
-            rel_list = [Path(p) for p in _split_csv(allowed)]
-            peer_allowed_paths[peer] = [
-                (projects_path / Path(rel)).resolve() for rel in rel_list
-            ]
+            peer_allowed_paths[peer] = [Path(p) for p in _split_lines(allowed)]
 
         # Parse the [AUTOCOMMIT] section
         auto_commit_projects: Set[Path] = set()
@@ -187,10 +195,8 @@ class Config:
         allowed_paths = self.peer_allowed_paths.get(peer_name)
         if not allowed_paths:
             return True  # If no rules, everything allowed
-        return any(
-            path.is_relative_to(self.projects_path / allowed)
-            for allowed in allowed_paths
-        )
+        path = path.expanduser().resolve()
+        return any(path.is_relative_to(allowed) for allowed in allowed_paths)
 
 
 def _split_csv(raw: str) -> list[str]:
@@ -211,3 +217,22 @@ def _expand_path_for_home(raw: Path, home_dir: Path) -> Path:
     if not p.is_absolute():
         p = home_dir / p
     return p
+
+
+def _normalize_allowed_path(
+    raw: Path,
+    projects_path: Path,
+    expand_paths: bool,
+    home_dir: Path | None,
+) -> Path:
+    if raw.is_absolute():
+        return raw.resolve() if expand_paths else raw
+
+    raw_str = str(raw)
+    if raw_str == "~" or raw_str.startswith("~/"):
+        if home_dir is not None:
+            return _expand_path_for_home(raw, home_dir)
+        return raw.expanduser().resolve() if expand_paths else raw
+
+    p = projects_path / raw
+    return p.resolve() if expand_paths else p

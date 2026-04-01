@@ -23,6 +23,49 @@ class TestConfig(unittest.TestCase):
         peers = self.config._all_peers
         self.assertGreater(len(peers), 0)
 
+    def test_allowed_paths_are_relative_to_expanded_projects_path(self):
+        home = Path("/tmp/echogit-home")
+        config = Config.load_from_buffer(
+            "[DEFAULT]\n"
+            "projects_path=~/data\n"
+            "git_path=~/store\n"
+            "[PEERS]\n"
+            "peers=peer1\n"
+            "[peer1]\n"
+            "allowed_paths=music, photos\n",
+            home_dir=home,
+        )
+
+        self.assertTrue(
+            config.is_path_allowed("peer1", home / "data" / "music" / "album")
+        )
+        self.assertTrue(
+            config.is_path_allowed("peer1", home / "data" / "photos" / "2026")
+        )
+        self.assertFalse(
+            config.is_path_allowed("peer1", home / "data" / "private")
+        )
+
+    def test_allowed_paths_expand_remote_home_paths(self):
+        home = Path("/home/remote")
+        config = Config.load_from_buffer(
+            "[DEFAULT]\n"
+            "projects_path=~/data\n"
+            "git_path=~/store\n"
+            "[PEERS]\n"
+            "peers=peer1\n"
+            "[peer1]\n"
+            "allowed_paths=~/shared\n",
+            home_dir=home,
+        )
+
+        self.assertTrue(
+            config.is_path_allowed("peer1", home / "shared" / "project")
+        )
+        self.assertFalse(
+            config.is_path_allowed("peer1", home / "data" / "shared")
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
