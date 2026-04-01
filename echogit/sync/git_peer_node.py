@@ -30,6 +30,9 @@ class GitPeerNode(PeerNode):
     def scan(self, on_update=None) -> None:
         if self._branches_loaded:
             return
+        self._load_branch_nodes(on_update=on_update)
+
+    def _load_branch_nodes(self, on_update=None) -> None:
         self.children.clear()
         for branch in self._fetch_remote_branches():
             child = BranchNode(
@@ -50,7 +53,15 @@ class GitPeerNode(PeerNode):
             self.scan(on_update=on_update)
 
     def _fetch_remote_branches(self) -> list[str]:
-        cmd = ["git", "-C", str(self.path), "branch"]
+        ref_prefix = f"refs/remotes/{self.name}"
+        cmd = [
+            "git",
+            "-C",
+            str(self.path),
+            "for-each-ref",
+            "--format=%(refname)",
+            ref_prefix,
+        ]
 
         success, out = safe_run_command(cmd)
         self.log(out, not success)
@@ -58,12 +69,16 @@ class GitPeerNode(PeerNode):
         if not success:
             return []
 
-        # Parse branch names from stdout
-        return [
-            name
-            for line in out.splitlines()
-            if (name := line.strip().lstrip("* ").strip())
-        ]
+        branches = set()
+        branch_prefix = f"{ref_prefix}/"
+        for line in out.splitlines():
+            ref = line.strip()
+            if not ref.startswith(branch_prefix):
+                continue
+            branch = ref[len(branch_prefix):]
+            if branch and branch != "HEAD":
+                branches.add(branch)
+        return sorted(branches)
 
     def sync(self, on_progress=None) -> bool:
         lock = self._get_peer_lock(self.name)
@@ -111,6 +126,8 @@ class GitPeerNode(PeerNode):
                 if not success:
                     return self._finalize_sync(False, on_progress)
 
+            self._branches_loaded = False
+            self._load_branch_nodes()
             return super().sync(on_progress=on_progress)
 
     def begin_sync(self) -> int:
