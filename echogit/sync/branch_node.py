@@ -5,7 +5,7 @@ from pathlib import Path
 import subprocess
 
 from echogit.node import Node
-from echogit.utils import _is_local_peer, is_peer_reachable, safe_run_command
+from echogit.utils import is_peer_reachable, safe_run_command
 
 
 class BranchNode(Node):
@@ -97,8 +97,6 @@ class BranchNode(Node):
         return out.strip() if ok else None
 
     def _remote_branch_exists(self, path: str, remote: str, branch: str) -> bool:
-        if _is_local_peer(remote):
-            return True
         check_cmd = ["git", "-C", path, "ls-remote", "--heads", remote, branch]
         ok, out = safe_run_command(check_cmd, cwd=path)
         return ok and out.strip() != ""
@@ -185,7 +183,7 @@ class BranchNode(Node):
 
         # Only attempt to pull if the branch exists on the remote
         if self._remote_branch_exists(path, remote, branch):
-            if self.config.ignore_peers_down and not _is_local_peer(remote):
+            if self.config.ignore_peers_down:
                 if not is_peer_reachable(remote):
                     self.log(f"peer '{remote}' unreachable; skipping pull", False)
                     return self.skip_sync(on_progress)

@@ -10,6 +10,44 @@ from echogit.sync.git_sync import GitProjectNode
 
 
 class TestBranchNode(unittest.TestCase):
+    def _branch_node(self, base: Path, branch_name: str = "feature") -> BranchNode:
+        project_path = base / "repo"
+        project_path.mkdir(exist_ok=True)
+        config = Config.load_from_buffer(
+            "[DEFAULT]\n"
+            f"projects_path={base}\n"
+            f"git_path={base / 'store'}\n"
+        )
+        project = GitProjectNode(path=project_path, config=config)
+        peer = GitPeerNode(path=project_path, peer_name="localhost", parent=project)
+        return BranchNode(path=project_path, branch_name=branch_name, parent=peer)
+
+    def test_remote_branch_exists_checks_local_peer_remote_refs(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            base = Path(tmp_dir)
+            branch = self._branch_node(base, branch_name="main")
+
+            with mock.patch(
+                "echogit.sync.branch_node.safe_run_command",
+                return_value=(True, ""),
+            ) as run_cmd:
+                self.assertFalse(
+                    branch._remote_branch_exists(str(branch.path), "localhost", "main")
+                )
+
+            run_cmd.assert_called_once_with(
+                [
+                    "git",
+                    "-C",
+                    str(branch.path),
+                    "ls-remote",
+                    "--heads",
+                    "localhost",
+                    "main",
+                ],
+                cwd=str(branch.path),
+            )
+
     def test_auto_commit_checks_out_target_branch_when_refs_match(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             base = Path(tmp_dir)
