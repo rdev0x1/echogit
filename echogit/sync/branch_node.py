@@ -102,7 +102,14 @@ class BranchNode(Node):
         return ok and out.strip() != ""
 
     def _fetch_remote_branch(self, path: str, remote: str, branch: str) -> bool:
-        fetch_cmd = ["git", "-C", path, "fetch", remote, branch]
+        fetch_cmd = [
+            "git",
+            "-C",
+            path,
+            "fetch",
+            remote,
+            f"{branch}:refs/remotes/{remote}/{branch}",
+        ]
         success, out = safe_run_command(fetch_cmd, cwd=path)
         self.log(out, not success)
         return success

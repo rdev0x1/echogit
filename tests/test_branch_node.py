@@ -48,6 +48,35 @@ class TestBranchNode(unittest.TestCase):
                 cwd=str(branch.path),
             )
 
+    def test_fetch_remote_branch_updates_tracking_ref(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            base = Path(tmp_dir)
+            branch = self._branch_node(base, branch_name="feature/photos")
+
+            with mock.patch(
+                "echogit.sync.branch_node.safe_run_command",
+                return_value=(True, ""),
+            ) as run_cmd:
+                self.assertTrue(
+                    branch._fetch_remote_branch(
+                        str(branch.path),
+                        "peer1",
+                        "feature/photos",
+                    )
+                )
+
+            run_cmd.assert_called_once_with(
+                [
+                    "git",
+                    "-C",
+                    str(branch.path),
+                    "fetch",
+                    "peer1",
+                    "feature/photos:refs/remotes/peer1/feature/photos",
+                ],
+                cwd=str(branch.path),
+            )
+
     def test_auto_commit_checks_out_target_branch_when_refs_match(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             base = Path(tmp_dir)
