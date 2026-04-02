@@ -4,7 +4,7 @@ from pathlib import Path
 from echogit.config import Config
 from echogit.sync.branch_node import BranchNode
 from echogit.sync.peer_node import PeerNode
-from echogit.utils import _is_local_peer, safe_run_command
+from echogit.utils import _is_local_peer, append_path_suffix, safe_run_command
 
 
 class GitPeerNode(PeerNode):
@@ -25,7 +25,7 @@ class GitPeerNode(PeerNode):
         rconfig = Config.get_config_peer(remote)
         if rconfig is None or rconfig.git_path is None:
             raise ValueError(f"Cannot fetch config for peer '{remote}'")
-        return rconfig.git_path / self.relative_path.with_suffix(".git")
+        return append_path_suffix(rconfig.git_path / self.relative_path, ".git")
 
     def scan(self, on_update=None) -> None:
         if self._branches_loaded:

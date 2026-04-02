@@ -4,7 +4,12 @@ from pathlib import Path
 
 from echogit.config import Config
 from echogit.sync.peer_node import PeerNode
-from echogit.utils import _is_local_peer, run_ssh_command, safe_run_command
+from echogit.utils import (
+    _is_local_peer,
+    append_path_suffix,
+    run_ssh_command,
+    safe_run_command,
+)
 
 
 class RsyncPeerNode(PeerNode):
@@ -17,7 +22,7 @@ class RsyncPeerNode(PeerNode):
         rconfig = Config.get_config_peer(self.name)
         if rconfig is None or rconfig.git_path is None:
             raise ValueError(f"Cannot fetch config for peer '{self.name}'")
-        return (rconfig.git_path / self.relative_path).with_suffix(".rsync")
+        return append_path_suffix(rconfig.git_path / self.relative_path, ".rsync")
 
     def _rsync_location(self, p: Path, *, trailing_slash: bool = False) -> str:
         path = str(p) + ("/" if trailing_slash else "")

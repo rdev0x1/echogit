@@ -8,6 +8,7 @@ import logging
 import shlex
 import socket
 import subprocess
+from pathlib import Path
 from typing import Set
 
 
@@ -97,3 +98,10 @@ def safe_run_command(cmd: list[str], cwd: str | None = None) -> tuple[bool, str]
         out += f"\nfailed\nSTDERR:\n{e}\n"
         logging.error(out)
         return False, out
+
+
+def append_path_suffix(path: Path, suffix: str) -> Path:
+    """
+    Return a sibling path with suffix appended to the full name.
+    """
+    return path.parent / f"{path.name}{suffix}"

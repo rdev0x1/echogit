@@ -3,6 +3,7 @@ from pathlib import Path
 
 from echogit.sync.project_node import ProjectNode
 from echogit.sync.rsync_peer_node import RsyncPeerNode
+from echogit.utils import append_path_suffix
 
 
 class RsyncProjectNode(ProjectNode):
@@ -12,7 +13,7 @@ class RsyncProjectNode(ProjectNode):
         if self.config.git_path is None:
             raise ValueError("git_path is not configured")
         rel = self.relative_path
-        return (self.config.git_path / rel).with_suffix(".rsync")
+        return append_path_suffix(self.config.git_path / rel, ".rsync")
 
     @cached_property
     def git_path(self) -> Path:

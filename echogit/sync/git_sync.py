@@ -3,7 +3,7 @@ from pathlib import Path
 
 from echogit.sync.git_peer_node import GitPeerNode
 from echogit.sync.project_node import ProjectNode
-from echogit.utils import safe_run_command
+from echogit.utils import append_path_suffix, safe_run_command
 
 
 class GitProjectNode(ProjectNode):
@@ -13,7 +13,7 @@ class GitProjectNode(ProjectNode):
         if self.config.git_path is None:
             raise ValueError("git_path is not configured")
         rel = self.relative_path
-        return (self.config.git_path / rel).with_suffix(".git")
+        return append_path_suffix(self.config.git_path / rel, ".git")
 
     def scan(self, on_update=None) -> None:
         self._scan(GitPeerNode, on_update=on_update)
