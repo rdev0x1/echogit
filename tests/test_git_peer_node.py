@@ -63,7 +63,7 @@ class TestGitPeerNode(unittest.TestCase):
             project = GitProjectNode(path=project_path, config=config)
             peer = GitPeerNode(path=project_path, peer_name="peer1", parent=project)
 
-            desired_url = "ssh://peer1:/remote/store/repo.git"
+            desired_url = "peer1:/remote/store/repo.git"
 
             def fake_run(cmd, cwd=None):
                 _ = cwd
@@ -107,6 +107,32 @@ class TestGitPeerNode(unittest.TestCase):
 
             self.assertEqual([child.name for child in peer.children], ["main"])
             branch_sync.assert_called_once()
+
+    def test_clone_command_uses_scp_style_remote_location(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            base = Path(tmp_dir)
+            project_path = base / "repo"
+            config = Config.load_from_buffer(
+                f"[DEFAULT]\nprojects_path={base}\ngit_path={base / 'store'}\n"
+            )
+            project = GitProjectNode(path=project_path, config=config)
+            peer = GitPeerNode(path=project_path, peer_name="peer1", parent=project)
+
+            with mock.patch(
+                "echogit.sync.git_peer_node._is_local_peer",
+                return_value=False,
+            ):
+                cmd = peer.get_clone_command(Path("repo"), Path("~/store"))
+
+        self.assertEqual(
+            cmd,
+            [
+                "git",
+                "clone",
+                "peer1:~/store/repo.git",
+                str(project_path),
+            ],
+        )
 
 
 if __name__ == "__main__":

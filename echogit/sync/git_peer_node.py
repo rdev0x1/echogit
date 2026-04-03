@@ -27,6 +27,11 @@ class GitPeerNode(PeerNode):
             raise ValueError(f"Cannot fetch config for peer '{remote}'")
         return append_path_suffix(rconfig.git_path / self.relative_path, ".git")
 
+    def _git_location(self, host: str, remote_repo: Path) -> str:
+        if _is_local_peer(host):
+            return str(remote_repo)
+        return f"{host}:{remote_repo}"
+
     def scan(self, on_update=None) -> None:
         if self._branches_loaded:
             return
@@ -89,11 +94,7 @@ class GitPeerNode(PeerNode):
 
             remote = self.name
             try:
-                desired_url = (
-                    str(self.git_path)
-                    if _is_local_peer(remote)
-                    else f"ssh://{remote}:{self.git_path}"
-                )
+                desired_url = self._git_location(remote, self.git_path)
             except ValueError as e:
                 self.log(str(e), True)
                 return self._finalize_sync(False, on_progress)
@@ -142,8 +143,8 @@ class GitPeerNode(PeerNode):
         remote_repo = remote_base / f"{rel}.git"
         host = self.name
 
-        # build an SSH URL and clone
-        url = str(remote_repo) if _is_local_peer(host) else f"ssh://{host}:{remote_repo}"
+        # Build an SSH remote location and clone.
+        url = self._git_location(host, remote_repo)
         cmd = ["git", "clone", url, str(self.path)]
 
         return cmd
