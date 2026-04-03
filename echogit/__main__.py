@@ -11,13 +11,10 @@ import sys
 from pathlib import Path
 import configparser
 import os
-from concurrent.futures import ThreadPoolExecutor
 import time
 
 from echogit.config import Config
-from echogit.discovery import discover_local_projects, discover_remote_projects
-from echogit.node_factory import from_path
-from echogit.sync.project_node import ProjectNode
+from echogit.core import EchogitService, SyncProgress
 from echogit.tui import run_ui
 
 
@@ -95,6 +92,7 @@ def main():
 
     args = parser.parse_args()
     config = Config.load_from_file()
+    service = EchogitService(config)
 
     if args.command != "sync" or args.verbose == 0:
         logging.basicConfig(level=logging.CRITICAL)
@@ -105,11 +103,11 @@ def main():
     _enable_color_logging()
 
     if args.command == "list":
-        _handle_list(config, args.json, args.cache_ttl)
+        _handle_list(config, service, args.json, args.cache_ttl)
     elif args.command == "list-remote":
-        _handle_list_remote(config, args.json, args.cache_ttl)
+        _handle_list_remote(config, service, args.json, args.cache_ttl)
     elif args.command == "sync":
-        _handle_sync(config, args.path, args.progress, args.status)
+        _handle_sync(service, args.path, args.progress, args.status)
     elif args.command == "config":
         _handle_config(config, args.path, args.get, args.set_values)
     elif args.command == "tui":
@@ -158,7 +156,9 @@ class _ColorFormatter(logging.Formatter):
         return f"{color}{msg}\x1b[0m"
 
 
-def _handle_list(config: Config, as_json: bool, cache_ttl: int) -> None:
+def _handle_list(
+    config: Config, service: EchogitService, as_json: bool, cache_ttl: int
+) -> None:
     cache_path = _cache_path("list.json")
     if cache_ttl > 0:
         cached = _load_cache(cache_path, cache_ttl)
@@ -166,10 +166,7 @@ def _handle_list(config: Config, as_json: bool, cache_ttl: int) -> None:
             _print_list_output(cached.get("data", []), as_json)
             return
 
-    projects = [
-        {"rel": str(proj.rel), "type": proj.type}
-        for proj in discover_local_projects(config.projects_path)
-    ]
+    projects = [proj.to_dict() for proj in service.list_projects()]
     if cache_ttl > 0:
         _write_cache(
             cache_path,
@@ -181,7 +178,9 @@ def _handle_list(config: Config, as_json: bool, cache_ttl: int) -> None:
     _print_list_output(projects, as_json)
 
 
-def _handle_list_remote(config: Config, as_json: bool, cache_ttl: int) -> None:
+def _handle_list_remote(
+    config: Config, service: EchogitService, as_json: bool, cache_ttl: int
+) -> None:
     cache_path = _cache_path("list-remote.json")
     peers = list(config.peers)
     if cache_ttl > 0:
@@ -190,25 +189,10 @@ def _handle_list_remote(config: Config, as_json: bool, cache_ttl: int) -> None:
             _print_list_remote_output(cached.get("data", {}), as_json)
             return
 
-    def _collect_remote(peer_name: str) -> list[dict[str, str]]:
-        return [
-            {"rel": str(proj.rel), "type": proj.type}
-            for proj in discover_remote_projects(peer_name)
-        ]
-
-    if not peers:
-        remote = {}
-    else:
-        max_workers = min(4, len(peers))
-        remote = {}
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {peer: executor.submit(_collect_remote, peer) for peer in peers}
-            for peer in peers:
-                try:
-                    remote[peer] = futures[peer].result()
-                except Exception as exc:  # pylint: disable=broad-exception-caught
-                    logging.error("list-remote failed for %s: %s", peer, exc)
-                    remote[peer] = []
+    remote = {
+        peer: [proj.to_dict() for proj in projects]
+        for peer, projects in service.list_remote_projects(peers).items()
+    }
     if cache_ttl > 0:
         _write_cache(cache_path, {"peers": peers, "data": remote})
     _print_list_remote_output(remote, as_json)
@@ -263,25 +247,21 @@ def _write_cache(path: Path, payload: dict) -> None:
 
 
 def _handle_sync(
-    config: Config, path: str | None, show_progress: bool, show_status: bool
+    service: EchogitService, path: str | None, show_progress: bool, show_status: bool
 ) -> None:
-    root = Path(path or config.projects_path)
-    root_node = from_path(root, config=config)
-    root_node.scan()
     if show_progress:
-        def on_progress(node, ok):
-            if isinstance(node, ProjectNode):
-                if show_status and node.is_dirty():
-                    status = "DIRTY"
-                else:
-                    status = "OK" if ok else "ERR"
-                line = f"{status} {node.relative_path}"
-                print(_color_status(status, line))
+        def on_progress(progress: SyncProgress):
+            if show_status and progress.dirty:
+                status = "DIRTY"
+            else:
+                status = "OK" if progress.ok else "ERR"
+            line = f"{status} {progress.rel}"
+            print(_color_status(status, line))
 
-        success = root_node.sync(on_progress=on_progress)
+        result = service.sync(Path(path) if path else None, on_progress=on_progress)
     else:
-        success = root_node.sync()
-    if success:
+        result = service.sync(Path(path) if path else None)
+    if result.ok:
         print("Sync OK")
     else:
         print("Sync failed")
