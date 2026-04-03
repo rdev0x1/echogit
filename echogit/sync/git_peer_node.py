@@ -4,7 +4,12 @@ from pathlib import Path
 from echogit.config import Config
 from echogit.sync.branch_node import BranchNode
 from echogit.sync.peer_node import PeerNode
-from echogit.utils import _is_local_peer, append_path_suffix, safe_run_command
+from echogit.utils import (
+    _is_local_peer,
+    append_path_suffix,
+    is_peer_reachable,
+    safe_run_command,
+)
 
 
 class GitPeerNode(PeerNode):
@@ -93,6 +98,10 @@ class GitPeerNode(PeerNode):
                 return True
 
             remote = self.name
+            if self.config.ignore_peers_down and not is_peer_reachable(remote):
+                self.log(f"peer '{remote}' unreachable; skipping sync", False)
+                return self.skip_sync(on_progress)
+
             try:
                 desired_url = self._git_location(remote, self.git_path)
             except ValueError as e:

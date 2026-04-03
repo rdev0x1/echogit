@@ -7,6 +7,7 @@ from echogit.sync.peer_node import PeerNode
 from echogit.utils import (
     _is_local_peer,
     append_path_suffix,
+    is_peer_reachable,
     run_ssh_command,
     safe_run_command,
 )
@@ -52,6 +53,10 @@ class RsyncPeerNode(PeerNode):
             # If this project is not cloned, then there is nothing to sync
             if not self.state.presence.exists_locally:
                 return True
+
+            if self.config.ignore_peers_down and not is_peer_reachable(self.name):
+                self.log(f"peer '{self.name}' unreachable; skipping sync", False)
+                return self.skip_sync(on_progress)
 
             try:
                 rsync_path = self.rsync_path

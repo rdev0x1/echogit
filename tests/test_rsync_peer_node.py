@@ -9,6 +9,38 @@ from echogit.sync.rsync_sync import RsyncProjectNode
 
 
 class TestRsyncPeerNode(unittest.TestCase):
+    def test_sync_skips_unreachable_peer_before_rsync_commands(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            base = Path(tmp_dir)
+            project_path = base / "media"
+            project_path.mkdir()
+            config = Config.load_from_buffer(
+                "[DEFAULT]\n"
+                f"projects_path={base}\n"
+                f"git_path={base / 'store'}\n"
+                "ignore_peers_down=true\n"
+            )
+            project = RsyncProjectNode(path=project_path, config=config)
+            peer = RsyncPeerNode(
+                path=project_path,
+                peer_name="peer1",
+                parent=project,
+            )
+
+            with mock.patch(
+                "echogit.sync.rsync_peer_node.is_peer_reachable",
+                return_value=False,
+            ), mock.patch(
+                "echogit.sync.rsync_peer_node.Config.get_config_peer",
+            ) as get_config, mock.patch(
+                "echogit.sync.rsync_peer_node.safe_run_command",
+            ) as run_cmd:
+                self.assertTrue(peer.sync())
+
+            get_config.assert_not_called()
+            run_cmd.assert_not_called()
+            self.assertEqual(peer.sync_state(), "unknown")
+
     def test_sync_targets_peer_rsync_store(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             base = Path(tmp_dir)
