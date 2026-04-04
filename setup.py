@@ -15,6 +15,11 @@ setup(
         # List your project's dependencies here, e.g.,
         # 'requests',
     ],
+    extras_require={
+        'qt': [
+            'PySide6>=6.7',
+        ],
+    },
     classifiers=[
         'Development Status :: 3 - Alpha',
         'Intended Audience :: Developers',
@@ -26,6 +31,7 @@ setup(
     entry_points={
         'console_scripts': [
             'echogit=echogit.__main__:main',
+            'echogit-qt=echogit.gui.qt_app:main',
         ],
     },
     python_requires='>=3.6',

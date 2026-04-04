@@ -89,6 +89,7 @@ def main():
 
     tui_parser = subparsers.add_parser("tui", help="Launch TUI interface")
     tui_parser.add_argument("path", nargs="?", default=None)
+    subparsers.add_parser("qt", help="Launch Qt tray applet")
 
     args = parser.parse_args()
     config = Config.load_from_file()
@@ -113,6 +114,10 @@ def main():
     elif args.command == "tui":
         path = Path(args.path or config.projects_path)
         run_ui(path, config)
+    elif args.command == "qt":
+        from echogit.gui.qt_app import main as qt_main
+
+        sys.exit(qt_main())
 
 
 def _color_status(status: str, text: str) -> str:
