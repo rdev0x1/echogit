@@ -1,4 +1,5 @@
 pytest
+setuptools
 typing_extensions==4.12.2
 urwid==2.6.15
 wcwidth==0.2.13
