@@ -82,6 +82,13 @@ class EchogitService:
         return SyncResult(ok=ok, root=root_node.path)
 
     def _list_one_remote(self, peer_name: str) -> list[ProjectItem]:
+        if self.config.is_local_peer(peer_name):
+            if self.config.git_path is None:
+                return []
+            return [
+                _project_item_from_ref(ref)
+                for ref in discover_local_projects(self.config.git_path)
+            ]
         return [
             _project_item_from_ref(ref)
             for ref in discover_remote_projects(peer_name)

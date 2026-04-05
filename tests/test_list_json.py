@@ -1,5 +1,6 @@
 import json
 import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -13,7 +14,12 @@ class TestListJson(unittest.TestCase):
             base = Path(tmp_dir)
             (base / "alpha").mkdir()
             (base / "beta").mkdir()
-            (base / "alpha/.git").mkdir()
+            subprocess.run(
+                ["git", "init", str(base / "alpha")],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
             (base / "beta/.rsync").mkdir()
 
             cfg_path = base / ".config/echogit/config.ini"

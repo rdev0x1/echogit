@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Optional
 
 from echogit.config import Config
+from echogit.discovery import is_valid_git_repository_path
 from echogit.folder_node import FolderNode
 from echogit.node import Node
 from echogit.sync.git_sync import GitProjectNode
@@ -20,7 +21,7 @@ def from_path(
     Exactly one of `config` or `parent` must be provided.
     """
     p = Path(path).resolve()
-    if (p / ".git").is_dir() or p.suffix == ".git":
+    if is_valid_git_repository_path(p):
         cls = GitProjectNode
     elif (p / ".rsync").is_dir() or p.suffix == ".rsync":
         cls = RsyncProjectNode

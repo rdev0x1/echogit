@@ -13,7 +13,7 @@ from io import StringIO
 from pathlib import Path
 from typing import List, Set
 
-from echogit.utils import is_peer_reachable, run_ssh_command
+from echogit.utils import _is_local_peer, is_peer_reachable, run_ssh_command
 
 
 class Config:
@@ -40,6 +40,7 @@ class Config:
         peer_allowed_paths: dict[str, List[Path]],
         auto_commit_projects: Set[Path],
         ignore_peers_down: bool,
+        remote_name: str | None = None,
         *,
         expand_paths: bool = True,
         home_dir: Path | None = None,
@@ -71,6 +72,7 @@ class Config:
         }
         self.auto_commit_projects = auto_commit_projects
         self.ignore_peers_down = ignore_peers_down
+        self.remote_name = remote_name
 
     @cached_property
     def peers(self) -> List[str]:
@@ -79,7 +81,17 @@ class Config:
         """
         if self.ignore_peers_down:
             return list(self._all_peers)
-        return [peer for peer in self._all_peers if is_peer_reachable(peer)]
+        return [
+            peer
+            for peer in self._all_peers
+            if self.is_local_peer(peer) or is_peer_reachable(peer)
+        ]
+
+    def is_local_peer(self, peer_name: str) -> bool:
+        """
+        Return True when a peer name points to this machine.
+        """
+        return peer_name == self.remote_name or _is_local_peer(peer_name)
 
     @classmethod
     def get_config_peer(cls, peer_name: str) -> "Config | None":
@@ -141,6 +153,7 @@ class Config:
         ignore_peers_down = cfg.getboolean(
             "DEFAULT", "ignore_peers_down", fallback=False
         )
+        remote_name = cfg.get("DEFAULT", "remote_name", fallback="").strip() or None
 
         return cls(
             projects_path=projects_path,
@@ -149,6 +162,7 @@ class Config:
             peer_allowed_paths=peer_allowed_paths,
             auto_commit_projects=auto_commit_projects,
             ignore_peers_down=ignore_peers_down,
+            remote_name=remote_name,
             expand_paths=expand_paths,
             home_dir=home_dir,
         )

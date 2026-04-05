@@ -39,7 +39,11 @@ class PeerNode(Node):
         host = self.name
 
         # fetch that host’s config.ini (use remote-aware path expansion)
-        rconfig = Config.get_config_peer(host)
+        rconfig = (
+            self.config
+            if self.config.is_local_peer(host)
+            else Config.get_config_peer(host)
+        )
         if rconfig is None:
             self.log(f"failed to read remote config for {host}", True)
             return False

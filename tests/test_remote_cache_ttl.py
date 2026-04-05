@@ -1,4 +1,5 @@
 import tempfile
+import subprocess
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -42,6 +43,39 @@ class TestRemoteCacheTTL(unittest.TestCase):
                 folder._load_remote_projects_for_node(on_update=None)
 
             self.assertEqual(call_count["count"], 2)
+
+    def test_local_peer_remote_cache_reads_local_store(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            base = Path(tmp_dir)
+            data = base / "data"
+            store = base / "store"
+            data.mkdir()
+            store.mkdir()
+            subprocess.run(
+                ["git", "init", "--bare", str(store / "missing.git")],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            config = Config.load_from_buffer(
+                "[DEFAULT]\n"
+                f"projects_path={data}\n"
+                f"git_path={store}\n"
+                "remote_name=xps\n"
+                "[PEERS]\n"
+                "peers=xps\n"
+            )
+            folder = FolderNode(path=data, config=config)
+            folder.scan()
+
+            with mock.patch(
+                "echogit.folder_node.discover_remote_projects_under",
+            ) as discover_remote:
+                folder._load_remote_projects_for_node(on_update=None)
+
+        discover_remote.assert_not_called()
+        self.assertEqual([child.name for child in folder.children], ["missing"])
+        self.assertFalse(folder.children[0].state.presence.exists_locally)
 
 
 if __name__ == "__main__":

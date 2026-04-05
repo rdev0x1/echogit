@@ -3,6 +3,7 @@ from contextlib import redirect_stderr
 import io
 import os
 from pathlib import Path
+import subprocess
 import tempfile
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -33,7 +34,13 @@ class TestQtApp(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             base = Path(tmp_dir)
             (base / "music/album/.rsync").mkdir(parents=True)
-            (base / "notes/work/.git").mkdir(parents=True)
+            (base / "notes/work").mkdir(parents=True)
+            subprocess.run(
+                ["git", "init", str(base / "notes/work")],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
             config = Config.load_from_buffer(
                 f"[DEFAULT]\nprojects_path={base}\ngit_path={base}\n"
             )

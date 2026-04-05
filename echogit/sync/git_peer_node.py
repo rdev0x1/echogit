@@ -27,13 +27,20 @@ class GitPeerNode(PeerNode):
     @cached_property
     def git_path(self) -> Path:
         remote = self.name
-        rconfig = Config.get_config_peer(remote)
+        rconfig = (
+            self.config
+            if self._is_peer_local(remote)
+            else Config.get_config_peer(remote)
+        )
         if rconfig is None or rconfig.git_path is None:
             raise ValueError(f"Cannot fetch config for peer '{remote}'")
         return append_path_suffix(rconfig.git_path / self.relative_path, ".git")
 
+    def _is_peer_local(self, host: str) -> bool:
+        return self.config.is_local_peer(host) or _is_local_peer(host)
+
     def _git_location(self, host: str, remote_repo: Path) -> str:
-        if _is_local_peer(host):
+        if self._is_peer_local(host):
             return str(remote_repo)
         return f"{host}:{remote_repo}"
 
@@ -98,7 +105,11 @@ class GitPeerNode(PeerNode):
                 return True
 
             remote = self.name
-            if self.config.ignore_peers_down and not is_peer_reachable(remote):
+            if (
+                self.config.ignore_peers_down
+                and not self._is_peer_local(remote)
+                and not is_peer_reachable(remote)
+            ):
                 self.log(f"peer '{remote}' unreachable; skipping sync", False)
                 return self.skip_sync(on_progress)
 

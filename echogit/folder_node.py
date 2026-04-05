@@ -17,6 +17,7 @@ from echogit.discovery import (
     ProjectRef,
     discover_local_projects,
     discover_remote_projects_under,
+    is_valid_git_repository_path,
 )
 from echogit.node import Node
 from echogit.sync.git_sync import GitProjectNode
@@ -146,7 +147,7 @@ class FolderNode(Node):
         return existing
 
     def _build_child_node(self, target: Path) -> Node:
-        if (target / ".git").is_dir() or target.suffix == ".git":
+        if is_valid_git_repository_path(target):
             return GitProjectNode(path=target, parent=self)
         if (target / ".rsync").is_dir() or target.suffix == ".rsync":
             return RsyncProjectNode(path=target, parent=self)
@@ -316,7 +317,7 @@ class FolderNode(Node):
                 cached = self._scan_context.remote_cache.get(cache_key)
             now = time.monotonic()
             if cached is None or now - cached[0] > self.REMOTE_CACHE_TTL:
-                refs = set(discover_remote_projects_under(peer, data_root))
+                refs = set(self._discover_projects_for_peer(peer, data_root))
                 with FolderNode._cache_lock:
                     self._scan_context.remote_cache[cache_key] = (now, refs)
                     cached = self._scan_context.remote_cache[cache_key]
@@ -326,3 +327,19 @@ class FolderNode(Node):
         if on_update:
             on_update(status="Scanning folders...", increment=False, force=True)
         self._remote_loaded = True
+
+    def _discover_projects_for_peer(
+        self, peer: str, data_root: Path
+    ) -> Iterator[ProjectRef]:
+        if not self.config.is_local_peer(peer):
+            yield from discover_remote_projects_under(peer, data_root)
+            return
+        if self.config.git_path is None:
+            return
+
+        base = (self.config.git_path / data_root).resolve()
+        if not base.exists():
+            return
+        for ref in discover_local_projects(base):
+            rel = ref.rel if data_root == Path(".") else data_root / ref.rel
+            yield ProjectRef(rel=rel, type=ref.type)

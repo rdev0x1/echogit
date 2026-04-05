@@ -23,6 +23,19 @@ class TestConfig(unittest.TestCase):
         peers = self.config._all_peers
         self.assertGreater(len(peers), 0)
 
+    def test_remote_name_marks_peer_as_local(self):
+        config = Config.load_from_buffer(
+            "[DEFAULT]\n"
+            "projects_path=/data\n"
+            "git_path=/store\n"
+            "remote_name=xps\n"
+            "[PEERS]\n"
+            "peers=xps,orion\n"
+        )
+
+        self.assertTrue(config.is_local_peer("xps"))
+        self.assertFalse(config.is_local_peer("orion"))
+
     def test_allowed_paths_are_relative_to_expanded_projects_path(self):
         home = Path("/tmp/echogit-home")
         config = Config.load_from_buffer(

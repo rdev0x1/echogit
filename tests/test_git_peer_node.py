@@ -136,6 +136,66 @@ class TestGitPeerNode(unittest.TestCase):
             self.assertEqual([child.name for child in peer.children], ["main"])
             branch_sync.assert_called_once()
 
+    def test_sync_uses_local_store_for_configured_local_peer(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            base = Path(tmp_dir)
+            project_path = base / "repo"
+            project_path.mkdir()
+            store_path = base / "store"
+            config = Config.load_from_buffer(
+                "[DEFAULT]\n"
+                f"projects_path={base}\n"
+                f"git_path={store_path}\n"
+                "ignore_peers_down=true\n"
+                "remote_name=xps\n"
+            )
+            project = GitProjectNode(path=project_path, config=config)
+            peer = GitPeerNode(path=project_path, peer_name="xps", parent=project)
+
+            commands = []
+
+            def fake_run(cmd, cwd=None):
+                commands.append((cmd, cwd))
+                if cmd == [
+                    "git",
+                    "-C",
+                    str(project_path),
+                    "remote",
+                    "get-url",
+                    "xps",
+                ]:
+                    return False, ""
+                return True, ""
+
+            with mock.patch(
+                "echogit.sync.git_peer_node.is_peer_reachable",
+                return_value=False,
+            ) as reachable, mock.patch(
+                "echogit.sync.git_peer_node.Config.get_config_peer",
+            ) as get_config, mock.patch(
+                "echogit.sync.git_peer_node.safe_run_command",
+                side_effect=fake_run,
+            ):
+                self.assertTrue(peer.sync())
+
+            reachable.assert_not_called()
+            get_config.assert_not_called()
+            self.assertIn(
+                (
+                    [
+                        "git",
+                        "-C",
+                        str(project_path),
+                        "remote",
+                        "add",
+                        "xps",
+                        str(store_path / "repo.git"),
+                    ],
+                    str(project_path),
+                ),
+                commands,
+            )
+
     def test_clone_command_uses_scp_style_remote_location(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             base = Path(tmp_dir)

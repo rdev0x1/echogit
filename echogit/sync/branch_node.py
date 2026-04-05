@@ -191,7 +191,10 @@ class BranchNode(Node):
         # Only attempt to pull if the branch exists on the remote
         if self._remote_branch_exists(path, remote, branch):
             if self.config.ignore_peers_down:
-                if not is_peer_reachable(remote):
+                if (
+                    not self.config.is_local_peer(remote)
+                    and not is_peer_reachable(remote)
+                ):
                     self.log(f"peer '{remote}' unreachable; skipping pull", False)
                     return self.skip_sync(on_progress)
             local_ref = f"refs/heads/{branch}"

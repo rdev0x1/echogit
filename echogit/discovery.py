@@ -10,6 +10,7 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import Iterator, Set
 import shlex
+import subprocess
 
 from echogit.config import Config
 from echogit.utils import run_ssh_command
@@ -67,6 +68,50 @@ def _sync_type_for_path(p: Path) -> str | None:
     return None
 
 
+def is_valid_git_repository_path(path: Path) -> bool:
+    """
+    Return True when `path` points to a real Git worktree or bare repository.
+
+    A stale or empty `.git` directory should not make a data root syncable as a
+    Git project.
+    """
+    p = Path(path)
+    if p.name == ".git":
+        return _is_valid_git_worktree(p.parent)
+    if p.suffix == ".git":
+        return _is_valid_bare_git_repo(p)
+    if (p / ".git").exists():
+        return _is_valid_git_worktree(p)
+    return False
+
+
+def _is_valid_git_worktree(path: Path) -> bool:
+    return _git_check(
+        ["git", "-C", str(path), "rev-parse", "--is-inside-work-tree"],
+        "true",
+    )
+
+
+def _is_valid_bare_git_repo(path: Path) -> bool:
+    return _git_check(
+        ["git", "--git-dir", str(path), "rev-parse", "--is-bare-repository"],
+        "true",
+    )
+
+
+def _git_check(cmd: list[str], expected: str) -> bool:
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        return False
+    return result.returncode == 0 and result.stdout.strip() == expected
+
+
 def _build_find_cmd(root: Path) -> str:
     """
     Build a pruning find(1) command:
@@ -115,6 +160,8 @@ def discover_local_projects(root: Path) -> Iterator[ProjectRef]:
         sync_type = _sync_type_for_path(p)
         if sync_type is None:
             return None
+        if sync_type == "git" and not is_valid_git_repository_path(p):
+            return None
 
         ref = _normalize(p, sync_type)
         rel = ref.rel.relative_to(root)
@@ -138,12 +185,20 @@ def discover_local_projects(root: Path) -> Iterator[ProjectRef]:
             continue
 
         # If current is a worktree (has .git/.rsync child), yield and prune.
+        # Invalid/stale markers are ignored so a bad root marker does not hide
+        # valid projects further down the tree.
         if ".git" in dirnames or ".rsync" in dirnames:
-            marker = ".git" if ".git" in dirnames else ".rsync"
-            ref = _maybe_ref(current / marker)
-            if ref is not None:
-                yield ref
-            dirnames[:] = []
+            markers = [name for name in (".git", ".rsync") if name in dirnames]
+            for marker in markers:
+                ref = _maybe_ref(current / marker)
+                if ref is not None:
+                    yield ref
+                    dirnames[:] = []
+                    break
+            else:
+                for marker in markers:
+                    dirnames.remove(marker)
+                continue
             continue
 
         # Prune repo dirs and skip-marked dirs; yield repos immediately.

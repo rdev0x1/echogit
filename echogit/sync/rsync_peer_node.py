@@ -20,19 +20,26 @@ class RsyncPeerNode(PeerNode):
 
     @cached_property
     def rsync_path(self) -> Path:
-        rconfig = Config.get_config_peer(self.name)
+        rconfig = (
+            self.config
+            if self._is_peer_local(self.name)
+            else Config.get_config_peer(self.name)
+        )
         if rconfig is None or rconfig.git_path is None:
             raise ValueError(f"Cannot fetch config for peer '{self.name}'")
         return append_path_suffix(rconfig.git_path / self.relative_path, ".rsync")
 
+    def _is_peer_local(self, host: str) -> bool:
+        return self.config.is_local_peer(host) or _is_local_peer(host)
+
     def _rsync_location(self, p: Path, *, trailing_slash: bool = False) -> str:
         path = str(p) + ("/" if trailing_slash else "")
-        if _is_local_peer(self.name):
+        if self._is_peer_local(self.name):
             return path
         return f"{self.name}:{shlex.quote(path)}"
 
     def _ensure_remote_dir(self, p: Path) -> bool:
-        if _is_local_peer(self.name):
+        if self._is_peer_local(self.name):
             try:
                 p.mkdir(parents=True, exist_ok=True)
             except OSError as exc:
@@ -54,7 +61,11 @@ class RsyncPeerNode(PeerNode):
             if not self.state.presence.exists_locally:
                 return True
 
-            if self.config.ignore_peers_down and not is_peer_reachable(self.name):
+            if (
+                self.config.ignore_peers_down
+                and not self._is_peer_local(self.name)
+                and not is_peer_reachable(self.name)
+            ):
                 self.log(f"peer '{self.name}' unreachable; skipping sync", False)
                 return self.skip_sync(on_progress)
 
@@ -92,7 +103,7 @@ class RsyncPeerNode(PeerNode):
         # Build an rsync remote source. The host can be an SSH config alias.
         url = (
             str(remote_repo) + "/"
-            if _is_local_peer(host)
+            if self._is_peer_local(host)
             else f"{host}:{shlex.quote(str(remote_repo) + '/')}"
         )
         path = str(self.path) + "/"
