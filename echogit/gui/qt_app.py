@@ -207,6 +207,7 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
             self._sync_counts = {"projects": 0, "branches": 0}
             self._progress_total = 0
             self._progress_done = 0
+            self._busy_cursor_depth = 0
             self.setWindowTitle("Echogit")
             self.resize(1120, 720)
 
@@ -312,15 +313,19 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
         def refresh_tree(self) -> None:
             self._set_activity("Scanning tree...")
             self._begin_indeterminate_progress()
-            QtWidgets.QApplication.processEvents()
-            self._root = self._service.build_tree()
-            self.project_tree.set_root(self._root)
-            self._set_summary(self._root)
-            root_item = self.project_tree.topLevelItem(0)
-            if root_item is not None:
-                self.project_tree.setCurrentItem(root_item)
-            self._set_activity("Ready")
-            self._reset_progress()
+            self._set_wait_cursor(True)
+            try:
+                QtWidgets.QApplication.processEvents()
+                self._root = self._service.build_tree()
+                self.project_tree.set_root(self._root)
+                self._set_summary(self._root)
+                root_item = self.project_tree.topLevelItem(0)
+                if root_item is not None:
+                    self.project_tree.setCurrentItem(root_item)
+                self._set_activity("Ready")
+            finally:
+                self._reset_progress()
+                self._set_wait_cursor(False)
 
         def sync_all(self) -> None:
             if self._root is None:
@@ -341,6 +346,7 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
             self._set_busy(True)
             self._set_activity(f"Preparing {node.name}...")
             self._begin_indeterminate_progress()
+            self._set_wait_cursor(True)
 
             self._thread = QtCore.QThread(self)
             self._worker = NodeSyncWorker(node)
@@ -358,30 +364,34 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
         def _on_item_expanded(self, item) -> None:
             self._set_activity("Loading node...")
             self._begin_indeterminate_progress()
-            QtWidgets.QApplication.processEvents()
-            self.project_tree.load_children(item)
-            self._set_summary(self._root)
-            self._set_activity("Ready")
-            self._reset_progress()
+            self._set_wait_cursor(True)
+            try:
+                QtWidgets.QApplication.processEvents()
+                self.project_tree.load_children(item)
+                self._set_summary(self._root)
+                self._set_activity("Ready")
+            finally:
+                self._reset_progress()
+                self._set_wait_cursor(False)
 
         def _on_sync_prepared(self, total: int) -> None:
             self._progress_total = max(1, total)
             self._progress_done = 0
             self.progress_bar.setRange(0, self._progress_total)
             self.progress_bar.setValue(0)
-            self._set_activity(f"Syncing: 0 / {self._progress_total}")
+            self._set_activity(f"Syncing: 0 / {self._progress_total} nodes")
 
         def _on_sync_progress(self, node: Node, _ok: bool) -> None:
+            self._advance_progress()
             if isinstance(node, ProjectNode):
                 self._sync_counts["projects"] += 1
-                self._advance_progress()
             elif isinstance(node, BranchNode):
                 self._sync_counts["branches"] += 1
-                self._advance_progress()
             self.project_tree.refresh_node(node)
             self._refresh_selected_details()
             self._set_activity(
                 "Syncing: "
+                f"{self._progress_done} / {self._progress_total} nodes, "
                 f"{self._sync_counts['projects']} projects, "
                 f"{self._sync_counts['branches']} branches"
             )
@@ -406,6 +416,7 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
 
         def _cleanup_worker(self) -> None:
             self._set_busy(False)
+            self._set_wait_cursor(False)
             self._worker = None
             self._thread = None
 
@@ -419,6 +430,21 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
         def _set_activity(self, text: str) -> None:
             self.activity_label.setText(text)
             self.statusBar().showMessage(text)
+
+        def _set_wait_cursor(self, busy: bool) -> None:
+            app = QtWidgets.QApplication.instance()
+            if app is None:
+                return
+            if busy:
+                if self._busy_cursor_depth == 0:
+                    app.setOverrideCursor(QtGui.QCursor(QtCore.Qt.WaitCursor))
+                self._busy_cursor_depth += 1
+                return
+            if self._busy_cursor_depth == 0:
+                return
+            self._busy_cursor_depth -= 1
+            if self._busy_cursor_depth == 0:
+                app.restoreOverrideCursor()
 
         def _begin_indeterminate_progress(self) -> None:
             self._progress_done = 0
@@ -659,7 +685,7 @@ def _node_has_own_error(node: Node) -> bool:
 
 
 def _sync_progress_total(node: Node) -> int:
-    total = 1 if isinstance(node, (ProjectNode, BranchNode)) else 0
+    total = 1
     for child in list(node.children):
         total += _sync_progress_total(child)
     return total

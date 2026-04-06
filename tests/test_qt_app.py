@@ -80,7 +80,7 @@ class TestQtApp(unittest.TestCase):
 
         self.assertIn("manual log line", window.log.toPlainText())
 
-    def test_sync_progress_bar_tracks_project_progress(self):
+    def test_sync_progress_bar_tracks_node_progress(self):
         if qt_app.QtWidgets is None:
             self.skipTest("PySide6 is not installed")
 
@@ -97,12 +97,40 @@ class TestQtApp(unittest.TestCase):
                 app = qt_app.QtWidgets.QApplication([])
             window = qt_app.MainWindow(service)
 
+        total = qt_app._sync_progress_total(window._root)
         project = window._root.children[0]
-        window._on_sync_prepared(1)
+        window._on_sync_prepared(total)
+        window._on_sync_progress(window._root, True)
         window._on_sync_progress(project, True)
 
-        self.assertEqual(window.progress_bar.maximum(), 1)
-        self.assertEqual(window.progress_bar.value(), 1)
+        self.assertEqual(total, 2)
+        self.assertEqual(window.progress_bar.maximum(), 2)
+        self.assertEqual(window.progress_bar.value(), 2)
+
+    def test_busy_cursor_is_scoped(self):
+        if qt_app.QtWidgets is None:
+            self.skipTest("PySide6 is not installed")
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            base = Path(tmp_dir)
+            config = Config.load_from_buffer(
+                f"[DEFAULT]\nprojects_path={base}\ngit_path={base}\n"
+            )
+            service = EchogitService(config)
+
+            app = qt_app.QtWidgets.QApplication.instance()
+            if app is None:
+                app = qt_app.QtWidgets.QApplication([])
+            window = qt_app.MainWindow(service)
+
+        try:
+            window._set_wait_cursor(True)
+            self.assertIsNotNone(app.overrideCursor())
+            window._set_wait_cursor(False)
+            self.assertIsNone(app.overrideCursor())
+        finally:
+            while app.overrideCursor() is not None:
+                app.restoreOverrideCursor()
 
 
 if __name__ == "__main__":
