@@ -50,6 +50,43 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
 
     NODE_ROLE = QtCore.Qt.UserRole + 1
 
+    class TreeBuildWorker(QtCore.QObject):
+        finished = QtCore.Signal(object)
+        failed = QtCore.Signal(str)
+
+        def __init__(self, service: EchogitService):
+            super().__init__()
+            self._service = service
+
+        @QtCore.Slot()
+        def run(self) -> None:
+            try:
+                root = self._service.build_tree()
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                self.failed.emit(str(exc))
+                return
+            self.finished.emit(root)
+
+
+    class NodeLoadWorker(QtCore.QObject):
+        finished = QtCore.Signal(object)
+        failed = QtCore.Signal(str)
+
+        def __init__(self, node: Node):
+            super().__init__()
+            self._node = node
+
+        @QtCore.Slot()
+        def run(self) -> None:
+            try:
+                self._node.ensure_scanned()
+                self._node.state.presence.collapse = False
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                self.failed.emit(str(exc))
+                return
+            self.finished.emit(self._node)
+
+
     class NodeSyncWorker(QtCore.QObject):
         prepared = QtCore.Signal(int)
         progress = QtCore.Signal(object, bool)
@@ -132,7 +169,6 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
             node = item.data(0, NODE_ROLE)
             if node is None:
                 return
-            node.ensure_scanned()
             node.state.presence.collapse = False
             self._sync_child_items(item, node)
             self._update_item(item, node)
@@ -204,6 +240,10 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
             self._root: Node | None = None
             self._thread: QtCore.QThread | None = None
             self._worker: NodeSyncWorker | None = None
+            self._scan_thread: QtCore.QThread | None = None
+            self._scan_worker: TreeBuildWorker | None = None
+            self._load_thread: QtCore.QThread | None = None
+            self._load_worker: NodeLoadWorker | None = None
             self._sync_counts = {"projects": 0, "branches": 0}
             self._progress_total = 0
             self._progress_done = 0
@@ -311,21 +351,22 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
             self.refresh_tree()
 
         def refresh_tree(self) -> None:
+            if self._is_busy():
+                return
             self._set_activity("Scanning tree...")
             self._begin_indeterminate_progress()
             self._set_wait_cursor(True)
-            try:
-                QtWidgets.QApplication.processEvents()
-                self._root = self._service.build_tree()
-                self.project_tree.set_root(self._root)
-                self._set_summary(self._root)
-                root_item = self.project_tree.topLevelItem(0)
-                if root_item is not None:
-                    self.project_tree.setCurrentItem(root_item)
-                self._set_activity("Ready")
-            finally:
-                self._reset_progress()
-                self._set_wait_cursor(False)
+            self._scan_thread = QtCore.QThread(self)
+            self._scan_worker = TreeBuildWorker(self._service)
+            self._scan_worker.moveToThread(self._scan_thread)
+            self._scan_thread.started.connect(self._scan_worker.run)
+            self._scan_worker.finished.connect(self._on_tree_built)
+            self._scan_worker.failed.connect(self._on_tree_build_failed)
+            self._scan_worker.finished.connect(self._scan_thread.quit)
+            self._scan_worker.failed.connect(self._scan_thread.quit)
+            self._scan_thread.finished.connect(self._cleanup_scan_worker)
+            self._scan_thread.start()
+            self._update_action_state()
 
         def sync_all(self) -> None:
             if self._root is None:
@@ -340,10 +381,9 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
             self._start_sync(node)
 
         def _start_sync(self, node: Node) -> None:
-            if self._thread is not None:
+            if self._is_busy():
                 return
             self._sync_counts = {"projects": 0, "branches": 0}
-            self._set_busy(True)
             self._set_activity(f"Preparing {node.name}...")
             self._begin_indeterminate_progress()
             self._set_wait_cursor(True)
@@ -360,19 +400,73 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
             self._worker.failed.connect(self._thread.quit)
             self._thread.finished.connect(self._cleanup_worker)
             self._thread.start()
+            self._update_action_state()
 
         def _on_item_expanded(self, item) -> None:
+            if self._is_busy():
+                return
+            node = item.data(0, NODE_ROLE)
+            if node is None:
+                return
             self._set_activity("Loading node...")
             self._begin_indeterminate_progress()
             self._set_wait_cursor(True)
-            try:
-                QtWidgets.QApplication.processEvents()
-                self.project_tree.load_children(item)
-                self._set_summary(self._root)
-                self._set_activity("Ready")
-            finally:
-                self._reset_progress()
-                self._set_wait_cursor(False)
+            self._load_thread = QtCore.QThread(self)
+            self._load_worker = NodeLoadWorker(node)
+            self._load_worker.moveToThread(self._load_thread)
+            self._load_thread.started.connect(self._load_worker.run)
+            self._load_worker.finished.connect(self._on_node_loaded)
+            self._load_worker.failed.connect(self._on_node_load_failed)
+            self._load_worker.finished.connect(self._load_thread.quit)
+            self._load_worker.failed.connect(self._load_thread.quit)
+            self._load_thread.finished.connect(self._cleanup_load_worker)
+            self._load_thread.start()
+            self._update_action_state()
+
+        def _on_tree_built(self, root: Node) -> None:
+            self._root = root
+            self.project_tree.set_root(self._root)
+            self._set_summary(self._root)
+            root_item = self.project_tree.topLevelItem(0)
+            if root_item is not None:
+                self.project_tree.setCurrentItem(root_item)
+            self._set_activity("Ready")
+
+        def _on_tree_build_failed(self, message: str) -> None:
+            self._set_activity("Scan failed")
+            self.log.setPlainText(f"ERROR: {message}")
+
+        def _cleanup_scan_worker(self) -> None:
+            self._scan_worker = None
+            self._scan_thread = None
+            self._reset_progress()
+            self._set_wait_cursor(False)
+            self._update_action_state()
+
+        def _on_node_loaded(self, node: Node) -> None:
+            item = self.project_tree.node_item(node)
+            self.project_tree.refresh_node(node)
+            if item is not None:
+                item.setExpanded(True)
+            self._set_summary(self._root)
+            self._refresh_selected_details()
+            self._set_activity("Ready")
+
+        def _on_node_load_failed(self, message: str) -> None:
+            self._set_activity("Load failed")
+            selected = self.project_tree.selected_node()
+            if selected is not None:
+                selected.log(message, error=True)
+                self._show_node_details(selected)
+            else:
+                self.log.setPlainText(f"ERROR: {message}")
+
+        def _cleanup_load_worker(self) -> None:
+            self._load_worker = None
+            self._load_thread = None
+            self._reset_progress()
+            self._set_wait_cursor(False)
+            self._update_action_state()
 
         def _on_sync_prepared(self, total: int) -> None:
             self._progress_total = max(1, total)
@@ -415,12 +509,19 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
                 self.log.setPlainText(f"ERROR: {message}")
 
         def _cleanup_worker(self) -> None:
-            self._set_busy(False)
-            self._set_wait_cursor(False)
             self._worker = None
             self._thread = None
+            self._set_wait_cursor(False)
+            self._update_action_state()
 
-        def _set_busy(self, busy: bool) -> None:
+        def _is_busy(self) -> bool:
+            return any(
+                thread is not None
+                for thread in (self._thread, self._scan_thread, self._load_thread)
+            )
+
+        def _update_action_state(self) -> None:
+            busy = self._is_busy()
             self.sync_action.setEnabled(not busy and self._root is not None)
             self.refresh_action.setEnabled(not busy)
             self.sync_selected_action.setEnabled(
@@ -485,7 +586,7 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
         def _on_selection_changed(self, current, _previous) -> None:
             node = current.data(0, NODE_ROLE) if current is not None else None
             self.sync_selected_action.setEnabled(
-                node is not None and self._thread is None
+                node is not None and not self._is_busy()
             )
             if node is None:
                 self.detail_title.setText("No node selected")

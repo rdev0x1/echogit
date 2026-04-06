@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import time
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from echogit.config import Config
@@ -50,6 +51,7 @@ class TestQtApp(unittest.TestCase):
             if app is None:
                 app = qt_app.QtWidgets.QApplication([])
             window = qt_app.MainWindow(service)
+            _wait_for_idle(window)
 
         self.assertEqual(window.project_tree.topLevelItemCount(), 1)
         self.assertIn("2 projects", window.summary_label.text())
@@ -71,6 +73,7 @@ class TestQtApp(unittest.TestCase):
             if app is None:
                 app = qt_app.QtWidgets.QApplication([])
             window = qt_app.MainWindow(service)
+            _wait_for_idle(window)
 
         item = window.project_tree.topLevelItem(0)
         node = item.data(0, qt_app.NODE_ROLE)
@@ -96,6 +99,7 @@ class TestQtApp(unittest.TestCase):
             if app is None:
                 app = qt_app.QtWidgets.QApplication([])
             window = qt_app.MainWindow(service)
+            _wait_for_idle(window)
 
         total = qt_app._sync_progress_total(window._root)
         project = window._root.children[0]
@@ -122,6 +126,7 @@ class TestQtApp(unittest.TestCase):
             if app is None:
                 app = qt_app.QtWidgets.QApplication([])
             window = qt_app.MainWindow(service)
+            _wait_for_idle(window)
 
         try:
             window._set_wait_cursor(True)
@@ -131,6 +136,61 @@ class TestQtApp(unittest.TestCase):
         finally:
             while app.overrideCursor() is not None:
                 app.restoreOverrideCursor()
+
+    def test_expanding_node_loads_children_in_background(self):
+        if qt_app.QtWidgets is None:
+            self.skipTest("PySide6 is not installed")
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            base = Path(tmp_dir)
+            (base / "alpha").mkdir()
+            subprocess.run(
+                ["git", "init", str(base / "alpha")],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            config = Config.load_from_buffer(
+                "[DEFAULT]\n"
+                f"projects_path={base}\n"
+                f"git_path={base / 'store'}\n"
+                "remote_name=xps\n"
+                "[PEERS]\n"
+                "peers=xps\n"
+            )
+            service = EchogitService(config)
+
+            app = qt_app.QtWidgets.QApplication.instance()
+            if app is None:
+                app = qt_app.QtWidgets.QApplication([])
+            window = qt_app.MainWindow(service)
+            _wait_for_idle(window)
+
+            project_item = window.project_tree.topLevelItem(0).child(0)
+            peer_item = project_item.child(0)
+            peer_node = peer_item.data(0, qt_app.NODE_ROLE)
+
+            self.assertFalse(peer_node.is_scanned())
+            window._on_item_expanded(peer_item)
+            self.assertIsNotNone(window._load_thread)
+            _wait_for_idle(window)
+
+        self.assertTrue(peer_node.is_scanned())
+
+
+def _wait_for_idle(window, timeout: float = 5.0) -> None:
+    app = qt_app.QtWidgets.QApplication.instance()
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        app.processEvents(qt_app.QtCore.QEventLoop.AllEvents, 50)
+        if not window._is_busy():
+            if window._root is None:
+                raise AssertionError(window.activity_label.text())
+            return
+        time.sleep(0.01)
+    raise AssertionError(
+        f"Qt background work did not finish: {window.statusBar().currentMessage()}"
+    )
 
 
 if __name__ == "__main__":
