@@ -51,6 +51,7 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
     NODE_ROLE = QtCore.Qt.UserRole + 1
 
     class NodeSyncWorker(QtCore.QObject):
+        prepared = QtCore.Signal(int)
         progress = QtCore.Signal(object, bool)
         finished = QtCore.Signal(object, bool)
         failed = QtCore.Signal(str)
@@ -63,6 +64,7 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
         def run(self) -> None:
             try:
                 self._node.ensure_scanned_deep()
+                self.prepared.emit(_sync_progress_total(self._node))
                 self._node.begin_sync()
                 ok = self._node.sync(on_progress=self._on_progress)
             except Exception as exc:  # pylint: disable=broad-exception-caught
@@ -203,6 +205,8 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
             self._thread: QtCore.QThread | None = None
             self._worker: NodeSyncWorker | None = None
             self._sync_counts = {"projects": 0, "branches": 0}
+            self._progress_total = 0
+            self._progress_done = 0
             self.setWindowTitle("Echogit")
             self.resize(1120, 720)
 
@@ -218,6 +222,13 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
             self.summary_label.setObjectName("summaryLabel")
             self.activity_label = QtWidgets.QLabel("Ready")
             self.activity_label.setObjectName("activityLabel")
+            self.progress_bar = QtWidgets.QProgressBar()
+            self.progress_bar.setObjectName("progressBar")
+            self.progress_bar.setFixedWidth(190)
+            self.progress_bar.setFixedHeight(18)
+            self.progress_bar.setTextVisible(False)
+            self.progress_bar.setRange(0, 100)
+            self.progress_bar.setValue(0)
             self.detail_title = QtWidgets.QLabel("No node selected")
             self.detail_title.setObjectName("detailTitle")
             self.detail_meta = QtWidgets.QLabel("")
@@ -257,6 +268,7 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
             header_layout.addWidget(self.summary_label)
             header_layout.addStretch(1)
             header_layout.addWidget(self.activity_label)
+            header_layout.addWidget(self.progress_bar)
 
             central = QtWidgets.QWidget()
             central_layout = QtWidgets.QVBoxLayout(central)
@@ -299,6 +311,8 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
 
         def refresh_tree(self) -> None:
             self._set_activity("Scanning tree...")
+            self._begin_indeterminate_progress()
+            QtWidgets.QApplication.processEvents()
             self._root = self._service.build_tree()
             self.project_tree.set_root(self._root)
             self._set_summary(self._root)
@@ -306,6 +320,7 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
             if root_item is not None:
                 self.project_tree.setCurrentItem(root_item)
             self._set_activity("Ready")
+            self._reset_progress()
 
         def sync_all(self) -> None:
             if self._root is None:
@@ -324,12 +339,14 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
                 return
             self._sync_counts = {"projects": 0, "branches": 0}
             self._set_busy(True)
-            self._set_activity(f"Syncing {node.name}...")
+            self._set_activity(f"Preparing {node.name}...")
+            self._begin_indeterminate_progress()
 
             self._thread = QtCore.QThread(self)
             self._worker = NodeSyncWorker(node)
             self._worker.moveToThread(self._thread)
             self._thread.started.connect(self._worker.run)
+            self._worker.prepared.connect(self._on_sync_prepared)
             self._worker.progress.connect(self._on_sync_progress)
             self._worker.finished.connect(self._on_sync_finished)
             self._worker.failed.connect(self._on_sync_failed)
@@ -340,15 +357,27 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
 
         def _on_item_expanded(self, item) -> None:
             self._set_activity("Loading node...")
+            self._begin_indeterminate_progress()
+            QtWidgets.QApplication.processEvents()
             self.project_tree.load_children(item)
             self._set_summary(self._root)
             self._set_activity("Ready")
+            self._reset_progress()
+
+        def _on_sync_prepared(self, total: int) -> None:
+            self._progress_total = max(1, total)
+            self._progress_done = 0
+            self.progress_bar.setRange(0, self._progress_total)
+            self.progress_bar.setValue(0)
+            self._set_activity(f"Syncing: 0 / {self._progress_total}")
 
         def _on_sync_progress(self, node: Node, _ok: bool) -> None:
             if isinstance(node, ProjectNode):
                 self._sync_counts["projects"] += 1
+                self._advance_progress()
             elif isinstance(node, BranchNode):
                 self._sync_counts["branches"] += 1
+                self._advance_progress()
             self.project_tree.refresh_node(node)
             self._refresh_selected_details()
             self._set_activity(
@@ -362,9 +391,11 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
             self.project_tree.refresh_all()
             self._set_summary(self._root)
             self._refresh_selected_details()
+            self._finish_progress()
             self._set_activity("Sync OK" if ok else "Sync failed")
 
         def _on_sync_failed(self, message: str) -> None:
+            self._finish_progress()
             self._set_activity("Sync failed")
             selected = self.project_tree.selected_node()
             if selected is not None:
@@ -388,6 +419,31 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
         def _set_activity(self, text: str) -> None:
             self.activity_label.setText(text)
             self.statusBar().showMessage(text)
+
+        def _begin_indeterminate_progress(self) -> None:
+            self._progress_done = 0
+            self._progress_total = 0
+            self.progress_bar.setRange(0, 0)
+
+        def _advance_progress(self) -> None:
+            self._progress_done += 1
+            if self._progress_total < self._progress_done:
+                self._progress_total = self._progress_done
+                self.progress_bar.setRange(0, self._progress_total)
+            self.progress_bar.setValue(self._progress_done)
+
+        def _finish_progress(self) -> None:
+            if self.progress_bar.maximum() == 0:
+                self.progress_bar.setRange(0, 100)
+                self.progress_bar.setValue(100)
+                return
+            self.progress_bar.setValue(self.progress_bar.maximum())
+
+        def _reset_progress(self) -> None:
+            self._progress_done = 0
+            self._progress_total = 0
+            self.progress_bar.setRange(0, 100)
+            self.progress_bar.setValue(0)
 
         def _set_summary(self, root: Node | None) -> None:
             if root is None:
@@ -602,6 +658,13 @@ def _node_has_own_error(node: Node) -> bool:
     return node.state.log.has_error or node.sync_state() == "error"
 
 
+def _sync_progress_total(node: Node) -> int:
+    total = 1 if isinstance(node, (ProjectNode, BranchNode)) else 0
+    for child in list(node.children):
+        total += _sync_progress_total(child)
+    return total
+
+
 def _style_sheet() -> str:
     return """
     QMainWindow {
@@ -646,6 +709,15 @@ def _style_sheet() -> str:
         color: #164436;
         font-weight: 600;
         padding: 4px 9px;
+    }
+    QProgressBar#progressBar {
+        background: #1e292d;
+        border: 1px solid #425257;
+        border-radius: 4px;
+    }
+    QProgressBar#progressBar::chunk {
+        background: #7fc29c;
+        border-radius: 3px;
     }
     QHeaderView::section {
         background: #edf1f3;

@@ -53,6 +53,7 @@ class TestQtApp(unittest.TestCase):
 
         self.assertEqual(window.project_tree.topLevelItemCount(), 1)
         self.assertIn("2 projects", window.summary_label.text())
+        self.assertEqual(window.progress_bar.value(), 0)
 
     def test_main_window_shows_selected_node_log(self):
         if qt_app.QtWidgets is None:
@@ -78,6 +79,30 @@ class TestQtApp(unittest.TestCase):
         window._show_node_details(node)
 
         self.assertIn("manual log line", window.log.toPlainText())
+
+    def test_sync_progress_bar_tracks_project_progress(self):
+        if qt_app.QtWidgets is None:
+            self.skipTest("PySide6 is not installed")
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            base = Path(tmp_dir)
+            (base / "alpha/.rsync").mkdir(parents=True)
+            config = Config.load_from_buffer(
+                f"[DEFAULT]\nprojects_path={base}\ngit_path={base}\n"
+            )
+            service = EchogitService(config)
+
+            app = qt_app.QtWidgets.QApplication.instance()
+            if app is None:
+                app = qt_app.QtWidgets.QApplication([])
+            window = qt_app.MainWindow(service)
+
+        project = window._root.children[0]
+        window._on_sync_prepared(1)
+        window._on_sync_progress(project, True)
+
+        self.assertEqual(window.progress_bar.maximum(), 1)
+        self.assertEqual(window.progress_bar.value(), 1)
 
 
 if __name__ == "__main__":
