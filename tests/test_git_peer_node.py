@@ -136,6 +136,68 @@ class TestGitPeerNode(unittest.TestCase):
             self.assertEqual([child.name for child in peer.children], ["main"])
             branch_sync.assert_called_once()
 
+    def test_sync_runs_branches_without_thread_pool(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            base = Path(tmp_dir)
+            project_path = base / "repo"
+            project_path.mkdir()
+            config = Config.load_from_buffer(
+                f"[DEFAULT]\nprojects_path={base}\ngit_path={base / 'store'}\n"
+            )
+            remote_config = Config.load_from_buffer(
+                "[DEFAULT]\nprojects_path=/remote/data\ngit_path=/remote/store\n"
+            )
+            project = GitProjectNode(path=project_path, config=config)
+            peer = GitPeerNode(path=project_path, peer_name="peer1", parent=project)
+
+            desired_url = "peer1:/remote/store/repo.git"
+
+            def fake_run(cmd, cwd=None):
+                _ = cwd
+                if cmd == [
+                    "git",
+                    "-C",
+                    str(project_path),
+                    "remote",
+                    "get-url",
+                    "peer1",
+                ]:
+                    return True, desired_url
+                if cmd == ["git", "-C", str(project_path), "fetch", "peer1"]:
+                    return True, ""
+                if cmd == [
+                    "git",
+                    "-C",
+                    str(project_path),
+                    "for-each-ref",
+                    "--format=%(refname)",
+                    "refs/remotes/peer1",
+                ]:
+                    return True, "refs/remotes/peer1/main\nrefs/remotes/peer1/dev\n"
+                raise AssertionError(f"unexpected command: {cmd!r}")
+
+            with mock.patch(
+                "echogit.sync.git_peer_node.Config.get_config_peer",
+                return_value=remote_config,
+            ), mock.patch(
+                "echogit.sync.git_peer_node._is_local_peer",
+                return_value=False,
+            ), mock.patch(
+                "echogit.sync.git_peer_node.safe_run_command",
+                side_effect=fake_run,
+            ), mock.patch.object(
+                BranchNode,
+                "sync",
+                return_value=True,
+            ) as branch_sync, mock.patch(
+                "echogit.node.ThreadPoolExecutor",
+            ) as executor:
+                self.assertTrue(peer.sync())
+
+            executor.assert_not_called()
+            self.assertEqual(branch_sync.call_count, 2)
+            self.assertEqual([child.name for child in peer.children], ["dev", "main"])
+
     def test_sync_uses_local_store_for_configured_local_peer(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             base = Path(tmp_dir)

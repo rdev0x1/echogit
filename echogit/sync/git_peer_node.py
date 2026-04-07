@@ -19,6 +19,8 @@ class GitPeerNode(PeerNode):
     We’ll list all remote branches and make one BranchNode each.
     """
     defer_scan = True
+    # Branch sync mutates one worktree through checkout/merge/commit.
+    sync_parallel = False
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
