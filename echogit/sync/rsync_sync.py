@@ -7,6 +7,8 @@ from echogit.utils import append_path_suffix
 
 
 class RsyncProjectNode(ProjectNode):
+    # Rsync peers read the same local tree and write to separate peer stores.
+    sync_parallel = True
 
     @cached_property
     def rsync_path(self) -> Path:

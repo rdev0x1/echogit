@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor as RealThreadPoolExecutor
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,6 +10,46 @@ from echogit.sync.rsync_sync import RsyncProjectNode
 
 
 class TestRsyncPeerNode(unittest.TestCase):
+    def test_rsync_project_syncs_peers_with_thread_pool(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            base = Path(tmp_dir)
+            project_path = base / "media"
+            project_path.mkdir()
+            config = Config.load_from_buffer(
+                f"[DEFAULT]\nprojects_path={base}\ngit_path={base / 'store'}\n"
+            )
+            project = RsyncProjectNode(path=project_path, config=config)
+            peer1 = RsyncPeerNode(
+                path=project_path,
+                peer_name="peer1",
+                parent=project,
+            )
+            peer2 = RsyncPeerNode(
+                path=project_path,
+                peer_name="peer2",
+                parent=project,
+            )
+            project.children = [peer1, peer2]
+            worker_counts = []
+
+            class RecordingExecutor(RealThreadPoolExecutor):
+                def __init__(self, max_workers=None):
+                    worker_counts.append(max_workers)
+                    super().__init__(max_workers=max_workers)
+
+            with mock.patch(
+                "echogit.node.ThreadPoolExecutor",
+                RecordingExecutor,
+            ), mock.patch.object(
+                RsyncPeerNode,
+                "sync",
+                return_value=True,
+            ) as peer_sync:
+                self.assertTrue(project.sync())
+
+            self.assertEqual(worker_counts, [project.SYNC_WORKERS])
+            self.assertEqual(peer_sync.call_count, 2)
+
     def test_sync_skips_unreachable_peer_before_rsync_commands(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             base = Path(tmp_dir)
