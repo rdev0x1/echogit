@@ -603,6 +603,8 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
 
         def _show_node_details(self, node: Node) -> None:
             status = _node_status_text(node)
+            if node.state.sync.reason:
+                status = f"{status} ({node.state.sync.reason})"
             dirty = "dirty" if node.is_dirty() else "clean"
             local = "local" if node.state.presence.exists_locally else "remote only"
             scanned = "scanned" if node.is_scanned() else "not scanned"
@@ -706,6 +708,8 @@ def _node_status_icon(node: Node):
     status = _node_status_text(node)
     if status == "ERR":
         return _theme_icon("dialog-error", "Error")
+    if status == "SKIP":
+        return _theme_icon("dialog-information", "Unknown")
     if status in {"STALE", "DIRTY"}:
         return _theme_icon("dialog-warning", "Dirty")
     if status == "REMOTE":
@@ -732,6 +736,8 @@ def _node_kind(node: Node) -> str:
 def _node_status_text(node: Node) -> str:
     if node.has_error() or node.sync_state() == "error":
         return "ERR"
+    if node.sync_state() == "skipped":
+        return "SKIP"
     if not node.is_folder and not node.state.presence.exists_locally:
         return "REMOTE"
     if not node.is_scanned():
@@ -749,6 +755,7 @@ def _node_status_brush(node: Node):
     status = _node_status_text(node)
     colors = {
         "ERR": "#b91c1c",
+        "SKIP": "#64748b",
         "REMOTE": "#2563a0",
         "UNK": "#a16207",
         "SYNC?": "#a16207",

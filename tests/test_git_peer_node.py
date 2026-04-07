@@ -36,7 +36,8 @@ class TestGitPeerNode(unittest.TestCase):
 
             get_config.assert_not_called()
             run_cmd.assert_not_called()
-            self.assertEqual(peer.sync_state(), "unknown")
+            self.assertEqual(peer.sync_state(), "skipped")
+            self.assertEqual(peer.state.sync.reason, "peer_down")
 
     def test_fetch_remote_branches_reads_remote_refs(self):
         with tempfile.TemporaryDirectory() as tmp_dir:

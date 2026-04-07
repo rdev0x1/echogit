@@ -22,6 +22,7 @@ PALETTE = [
     ("normal", "light green", ""),
     ("remote", "light blue", ""),
     ("unknown", "yellow", ""),
+    ("skipped", "dark gray", ""),
     ("stale", "yellow", ""),
 ]
 
@@ -52,7 +53,10 @@ class ProjectWidget(urwid.WidgetWrap):
             return "remote"
         if self.node.has_error():
             return "error"
-        if self.node.sync_state() == "unknown" or not self.node.is_scanned():
+        if (
+            self.node.sync_state() in {"unknown", "skipped"}
+            or not self.node.is_scanned()
+        ):
             return "unknown"
         return "normal"
 
@@ -89,6 +93,8 @@ class ProjectWidget(urwid.WidgetWrap):
         attr = "normal"
         if self.node.has_error() or self.node.sync_state() == "error":
             state, attr = "ERR", "error"
+        elif self.node.sync_state() == "skipped":
+            state, attr = "SKIP", "skipped"
         elif not self.node.is_folder and not self.node.state.presence.exists_locally:
             state, attr = "REMOTE", "remote"
         elif not self.node.is_scanned():

@@ -54,6 +54,16 @@ class TestSyncState(unittest.TestCase):
         self.assertTrue(parent.is_synced(gen))
         self.assertEqual(child.sync_state(), "error")
 
+    def test_skip_sync_records_category(self):
+        node = DummyNode(self.config.projects_path / "dummy", config=self.config)
+        gen = node.begin_sync()
+
+        self.assertTrue(node.skip_sync(reason="peer_down"))
+
+        self.assertEqual(node.sync_state(), "skipped")
+        self.assertEqual(node.state.sync.reason, "peer_down")
+        self.assertTrue(node.is_synced(gen))
+
 
 if __name__ == "__main__":
     unittest.main()

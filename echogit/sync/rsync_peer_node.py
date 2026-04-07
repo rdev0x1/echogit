@@ -67,7 +67,7 @@ class RsyncPeerNode(PeerNode):
                 and not is_peer_reachable(self.name)
             ):
                 self.log(f"peer '{self.name}' unreachable; skipping sync", False)
-                return self.skip_sync(on_progress)
+                return self.skip_sync(on_progress, reason="peer_down")
 
             try:
                 rsync_path = self.rsync_path

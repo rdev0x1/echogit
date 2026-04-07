@@ -111,6 +111,22 @@ class TestQtApp(unittest.TestCase):
         self.assertEqual(window.progress_bar.maximum(), 2)
         self.assertEqual(window.progress_bar.value(), 2)
 
+    def test_skipped_node_status_is_distinct(self):
+        if qt_app.QtWidgets is None:
+            self.skipTest("PySide6 is not installed")
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            base = Path(tmp_dir)
+            config = Config.load_from_buffer(
+                f"[DEFAULT]\nprojects_path={base}\ngit_path={base}\n"
+            )
+            node = qt_app.FolderNode(path=base, config=config)
+
+        node.skip_sync(reason="peer_down")
+
+        self.assertEqual(qt_app._node_status_text(node), "SKIP")
+        self.assertIn("peer_down", node.state.sync.reason)
+
     def test_busy_cursor_is_scoped(self):
         if qt_app.QtWidgets is None:
             self.skipTest("PySide6 is not installed")

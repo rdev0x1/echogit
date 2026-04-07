@@ -80,7 +80,8 @@ class TestRsyncPeerNode(unittest.TestCase):
 
             get_config.assert_not_called()
             run_cmd.assert_not_called()
-            self.assertEqual(peer.sync_state(), "unknown")
+            self.assertEqual(peer.sync_state(), "skipped")
+            self.assertEqual(peer.state.sync.reason, "peer_down")
 
     def test_sync_targets_peer_rsync_store(self):
         with tempfile.TemporaryDirectory() as tmp_dir:

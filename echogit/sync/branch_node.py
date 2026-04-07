@@ -196,7 +196,7 @@ class BranchNode(Node):
                     and not is_peer_reachable(remote)
                 ):
                     self.log(f"peer '{remote}' unreachable; skipping pull", False)
-                    return self.skip_sync(on_progress)
+                    return self.skip_sync(on_progress, reason="peer_down")
             local_ref = f"refs/heads/{branch}"
             remote_ref = f"refs/remotes/{remote}/{branch}"
 

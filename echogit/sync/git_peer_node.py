@@ -113,7 +113,7 @@ class GitPeerNode(PeerNode):
                 and not is_peer_reachable(remote)
             ):
                 self.log(f"peer '{remote}' unreachable; skipping sync", False)
-                return self.skip_sync(on_progress)
+                return self.skip_sync(on_progress, reason="peer_down")
 
             try:
                 desired_url = self._git_location(remote, self.git_path)

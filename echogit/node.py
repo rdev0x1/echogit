@@ -18,6 +18,7 @@ class NodeLogState:
 @dataclass
 class NodeSyncState:
     state: str = "unknown"
+    reason: str | None = None
     gen: int = 0
     last_gen: int = -1
     current_gen: int | None = None
@@ -150,14 +151,18 @@ class Node:
         """
         self.state.sync.gen += 1
         self.state.sync.current_gen = self.state.sync.gen
+        self.state.sync.reason = None
         return self.state.sync.gen
 
-    def mark_synced(self, gen: int, success: bool) -> None:
+    def mark_synced(
+        self, gen: int, success: bool, reason: str | None = None
+    ) -> None:
         """
         Record the result of a sync generation.
         """
         self.state.sync.last_gen = gen
         self.state.sync.state = "ok" if success else "error"
+        self.state.sync.reason = reason
 
     def sync(self, on_progress=None) -> bool:
         """
@@ -186,6 +191,7 @@ class Node:
 
     def _finalize_sync(self, success: bool, on_progress=None) -> bool:
         self.state.sync.state = "ok" if success else "error"
+        self.state.sync.reason = None
         if self.state.sync.current_gen is not None:
             self.mark_synced(self.state.sync.current_gen, success)
         if on_progress:
@@ -198,11 +204,14 @@ class Node:
         """
         return self.state.sync.last_gen == gen
 
-    def skip_sync(self, on_progress=None) -> bool:
+    def skip_sync(self, on_progress=None, reason: str = "skipped") -> bool:
         """
         Skip sync without marking ok/error (used for unreachable peers).
         """
-        self.state.sync.state = "unknown"
+        self.state.sync.state = "skipped"
+        self.state.sync.reason = reason
+        if self.state.sync.current_gen is not None:
+            self.state.sync.last_gen = self.state.sync.current_gen
         self.state.sync.current_gen = None
         if on_progress:
             on_progress(self, True)
