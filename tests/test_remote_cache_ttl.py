@@ -77,6 +77,40 @@ class TestRemoteCacheTTL(unittest.TestCase):
         self.assertEqual([child.name for child in folder.children], ["missing"])
         self.assertFalse(folder.children[0].state.presence.exists_locally)
 
+    def test_remote_only_local_peer_project_can_clone_from_store(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            base = Path(tmp_dir)
+            data = base / "data"
+            store = base / "store"
+            data.mkdir()
+            store.mkdir()
+            subprocess.run(
+                ["git", "init", "--bare", str(store / "missing.git")],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            config = Config.load_from_buffer(
+                "[DEFAULT]\n"
+                f"projects_path={data}\n"
+                f"git_path={store}\n"
+                "remote_name=xps\n"
+                "[PEERS]\n"
+                "peers=xps\n"
+            )
+            folder = FolderNode(path=data, config=config)
+            folder.scan()
+            folder._load_remote_projects_for_node(on_update=None)
+
+            project = folder.children[0]
+            self.assertFalse(project.state.presence.exists_locally)
+            self.assertEqual(project.state.presence.remote_peers, ["xps"])
+
+            self.assertTrue(project.clone())
+
+            self.assertTrue(project.state.presence.exists_locally)
+            self.assertTrue((data / "missing/.git").is_dir())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -40,21 +40,23 @@ class ProjectNode(Node):
     def _scan(self, cls, on_update=None) -> None:
         self.children.clear()
 
-        # Remote project: nothing to do until the user decide to clone it
-        if self.state.presence.exists_locally is False:
-            self.log("scan skipped: project not cloned")
-            self.state.presence.scanned = True
-            return
-
         config = self.config
+        peer_names = (
+            list(self.state.presence.remote_peers)
+            if not self.state.presence.exists_locally
+            and self.state.presence.remote_peers
+            else list(config.peers)
+        )
 
-        for peer_name in config.peers:
+        for peer_name in peer_names:
             # only instantiate peers that are both reachable and allowed for this path
             if not config.is_path_allowed(peer_name, self.path):
                 continue
 
             peer_node = cls(path=self.path, peer_name=peer_name, parent=self)
-            if not getattr(cls, "defer_scan", False):
+            if self.state.presence.exists_locally and not getattr(
+                cls, "defer_scan", False
+            ):
                 peer_node.scan(on_update=on_update)
             self.add_child(peer_node)
             if on_update:

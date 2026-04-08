@@ -191,9 +191,7 @@ class FolderNode(Node):
             for ref in discover_local_projects(self.path):
                 with FolderNode._cache_lock:
                     self._scan_context.local_cache.add(ref)
-                self._add_project_from_cache(
-                    ref, data_root, on_update=on_update
-                )
+                self._add_project_from_cache(ref, data_root, on_update=on_update)
             if on_update:
                 on_update(status="Scanning folders...", increment=False, force=True)
 
@@ -262,11 +260,19 @@ class FolderNode(Node):
         return True
 
     def _add_project_from_cache(
-        self, ref: ProjectRef, data_root: Path, on_update=None
+        self,
+        ref: ProjectRef,
+        data_root: Path,
+        on_update=None,
+        peer_name: str | None = None,
     ) -> None:
         with FolderNode._index_lock:
-            if ref.rel in self._scan_context.node_by_relpath:
-                return  # Already exists locally
+            existing = self._scan_context.node_by_relpath.get(ref.rel)
+        if existing is not None:
+            self._remember_remote_peer(existing, peer_name)
+            if peer_name is not None and not existing.state.presence.exists_locally:
+                existing.scan(on_update=on_update)
+            return  # Already exists locally or from another peer
 
         # process only subfolders of data_root
         if not ref.rel.is_relative_to(data_root):
@@ -289,6 +295,7 @@ class FolderNode(Node):
             return  # Skip unknown type
 
         node.state.presence.exists_locally = abs_path.is_dir()
+        self._remember_remote_peer(node, peer_name)
         parent_node.add_child(node)
         parent_node.state.presence.scanned = True
         if on_update:
@@ -296,6 +303,13 @@ class FolderNode(Node):
         node.scan(on_update=on_update)
         with FolderNode._index_lock:
             self._scan_context.node_by_relpath[ref.rel] = node
+
+    def _remember_remote_peer(self, node: Node, peer_name: str | None) -> None:
+        if peer_name is None:
+            return
+        peers = node.state.presence.remote_peers
+        if peer_name not in peers:
+            peers.append(peer_name)
 
     def _load_remote_projects_for_node(self, on_update=None) -> None:
         data_root = self._rel_from_roots(self.path)
@@ -322,7 +336,12 @@ class FolderNode(Node):
                     self._scan_context.remote_cache[cache_key] = (now, refs)
                     cached = self._scan_context.remote_cache[cache_key]
             for ref in cached[1]:
-                self._add_project_from_cache(ref, data_root, on_update=on_update)
+                self._add_project_from_cache(
+                    ref,
+                    data_root,
+                    on_update=on_update,
+                    peer_name=peer,
+                )
 
         if on_update:
             on_update(status="Scanning folders...", increment=False, force=True)
