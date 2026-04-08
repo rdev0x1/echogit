@@ -72,6 +72,30 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
         finished = QtCore.Signal(object)
         failed = QtCore.Signal(str)
 
+        def __init__(self, node: Node, *, force: bool = False):
+            super().__init__()
+            self._node = node
+            self._force = force
+
+        @QtCore.Slot()
+        def run(self) -> None:
+            try:
+                if self._force:
+                    if hasattr(self._node, "_branches_loaded"):
+                        self._node._branches_loaded = False
+                    self._node.scan()
+                self._node.ensure_scanned()
+                self._node.state.presence.collapse = False
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                self.failed.emit(str(exc))
+                return
+            self.finished.emit(self._node)
+
+
+    class NodeCloneWorker(QtCore.QObject):
+        finished = QtCore.Signal(object, bool)
+        failed = QtCore.Signal(str)
+
         def __init__(self, node: Node):
             super().__init__()
             self._node = node
@@ -79,12 +103,14 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
         @QtCore.Slot()
         def run(self) -> None:
             try:
-                self._node.ensure_scanned()
-                self._node.state.presence.collapse = False
+                ok = self._node.clone()
+                if ok:
+                    self._node.scan()
+                    self._node.ensure_scanned()
             except Exception as exc:  # pylint: disable=broad-exception-caught
                 self.failed.emit(str(exc))
                 return
-            self.finished.emit(self._node)
+            self.finished.emit(self._node, ok)
 
 
     class NodeSyncWorker(QtCore.QObject):
@@ -244,6 +270,8 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
             self._scan_worker: TreeBuildWorker | None = None
             self._load_thread: QtCore.QThread | None = None
             self._load_worker: NodeLoadWorker | None = None
+            self._clone_thread: QtCore.QThread | None = None
+            self._clone_worker: NodeCloneWorker | None = None
             self._sync_counts = {"projects": 0, "branches": 0}
             self._progress_total = 0
             self._progress_done = 0
@@ -254,6 +282,8 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
             self.project_tree = NodeTree()
             self.project_tree.currentItemChanged.connect(self._on_selection_changed)
             self.project_tree.itemExpanded.connect(self._on_item_expanded)
+            self.project_tree.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+            self.project_tree.customContextMenuRequested.connect(self._show_node_menu)
 
             self.log = QtWidgets.QPlainTextEdit()
             self.log.setReadOnly(True)
@@ -334,6 +364,22 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
             self.sync_selected_action.setToolTip("Sync selected node")
             self.sync_selected_action.triggered.connect(self.sync_selected)
             self.sync_selected_action.setEnabled(False)
+            self.refresh_node_action = QtGui.QAction("Refresh Node", self)
+            self.refresh_node_action.setIcon(_theme_icon("view-refresh", "Refresh"))
+            self.refresh_node_action.triggered.connect(self.refresh_selected_node)
+            self.refresh_node_action.setEnabled(False)
+            self.clone_node_action = QtGui.QAction("Clone", self)
+            self.clone_node_action.setIcon(_theme_icon("folder-new", "Remote"))
+            self.clone_node_action.triggered.connect(self.clone_selected_node)
+            self.clone_node_action.setEnabled(False)
+            self.copy_path_action = QtGui.QAction("Copy Path", self)
+            self.copy_path_action.setIcon(_theme_icon("edit-copy", "Copy"))
+            self.copy_path_action.triggered.connect(self.copy_selected_path)
+            self.copy_path_action.setEnabled(False)
+            self.show_log_action = QtGui.QAction("Show Log", self)
+            self.show_log_action.setIcon(_theme_icon("text-x-log", "Log"))
+            self.show_log_action.triggered.connect(self.focus_selected_log)
+            self.show_log_action.setEnabled(False)
             self.quit_action = QtGui.QAction("Quit", self)
             self.quit_action.setIcon(_theme_icon("application-exit", "Quit"))
             self.quit_action.triggered.connect(QtWidgets.QApplication.quit)
@@ -380,6 +426,30 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
                 return
             self._start_sync(node)
 
+        def refresh_selected_node(self) -> None:
+            node = self.project_tree.selected_node()
+            if node is not None:
+                self._start_node_load(node, force=True)
+
+        def clone_selected_node(self) -> None:
+            node = self.project_tree.selected_node()
+            if node is not None:
+                self._start_clone(node)
+
+        def copy_selected_path(self) -> None:
+            node = self.project_tree.selected_node()
+            app = QtWidgets.QApplication.instance()
+            if node is None or app is None:
+                return
+            app.clipboard().setText(str(node.path))
+            self._set_activity("Path copied")
+
+        def focus_selected_log(self) -> None:
+            if self.project_tree.selected_node() is None:
+                return
+            self.log.setFocus()
+            self.log.moveCursor(QtGui.QTextCursor.Start)
+
         def _start_sync(self, node: Node) -> None:
             if self._is_busy():
                 return
@@ -408,11 +478,16 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
             node = item.data(0, NODE_ROLE)
             if node is None:
                 return
+            self._start_node_load(node)
+
+        def _start_node_load(self, node: Node, *, force: bool = False) -> None:
+            if self._is_busy():
+                return
             self._set_activity("Loading node...")
             self._begin_indeterminate_progress()
             self._set_wait_cursor(True)
             self._load_thread = QtCore.QThread(self)
-            self._load_worker = NodeLoadWorker(node)
+            self._load_worker = NodeLoadWorker(node, force=force)
             self._load_worker.moveToThread(self._load_thread)
             self._load_thread.started.connect(self._load_worker.run)
             self._load_worker.finished.connect(self._on_node_loaded)
@@ -421,6 +496,24 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
             self._load_worker.failed.connect(self._load_thread.quit)
             self._load_thread.finished.connect(self._cleanup_load_worker)
             self._load_thread.start()
+            self._update_action_state()
+
+        def _start_clone(self, node: Node) -> None:
+            if self._is_busy() or not _node_can_clone(node):
+                return
+            self._set_activity(f"Cloning {node.name}...")
+            self._begin_indeterminate_progress()
+            self._set_wait_cursor(True)
+            self._clone_thread = QtCore.QThread(self)
+            self._clone_worker = NodeCloneWorker(node)
+            self._clone_worker.moveToThread(self._clone_thread)
+            self._clone_thread.started.connect(self._clone_worker.run)
+            self._clone_worker.finished.connect(self._on_node_cloned)
+            self._clone_worker.failed.connect(self._on_node_clone_failed)
+            self._clone_worker.finished.connect(self._clone_thread.quit)
+            self._clone_worker.failed.connect(self._clone_thread.quit)
+            self._clone_thread.finished.connect(self._cleanup_clone_worker)
+            self._clone_thread.start()
             self._update_action_state()
 
         def _on_tree_built(self, root: Node) -> None:
@@ -464,6 +557,28 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
         def _cleanup_load_worker(self) -> None:
             self._load_worker = None
             self._load_thread = None
+            self._reset_progress()
+            self._set_wait_cursor(False)
+            self._update_action_state()
+
+        def _on_node_cloned(self, node: Node, ok: bool) -> None:
+            self.project_tree.refresh_node(node)
+            self._set_summary(self._root)
+            self._show_node_details(node)
+            self._set_activity("Clone OK" if ok else "Clone failed")
+
+        def _on_node_clone_failed(self, message: str) -> None:
+            self._set_activity("Clone failed")
+            selected = self.project_tree.selected_node()
+            if selected is not None:
+                selected.log(message, error=True)
+                self._show_node_details(selected)
+            else:
+                self.log.setPlainText(f"ERROR: {message}")
+
+        def _cleanup_clone_worker(self) -> None:
+            self._clone_worker = None
+            self._clone_thread = None
             self._reset_progress()
             self._set_wait_cursor(False)
             self._update_action_state()
@@ -517,16 +632,26 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
         def _is_busy(self) -> bool:
             return any(
                 thread is not None
-                for thread in (self._thread, self._scan_thread, self._load_thread)
+                for thread in (
+                    self._thread,
+                    self._scan_thread,
+                    self._load_thread,
+                    self._clone_thread,
+                )
             )
 
         def _update_action_state(self) -> None:
             busy = self._is_busy()
+            node = self.project_tree.selected_node()
             self.sync_action.setEnabled(not busy and self._root is not None)
             self.refresh_action.setEnabled(not busy)
-            self.sync_selected_action.setEnabled(
-                not busy and self.project_tree.selected_node() is not None
+            self.sync_selected_action.setEnabled(not busy and node is not None)
+            self.refresh_node_action.setEnabled(not busy and node is not None)
+            self.clone_node_action.setEnabled(
+                not busy and node is not None and _node_can_clone(node)
             )
+            self.copy_path_action.setEnabled(node is not None)
+            self.show_log_action.setEnabled(node is not None)
 
         def _set_activity(self, text: str) -> None:
             self.activity_label.setText(text)
@@ -585,9 +710,7 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
 
         def _on_selection_changed(self, current, _previous) -> None:
             node = current.data(0, NODE_ROLE) if current is not None else None
-            self.sync_selected_action.setEnabled(
-                node is not None and not self._is_busy()
-            )
+            self._update_action_state()
             if node is None:
                 self.detail_title.setText("No node selected")
                 self.detail_meta.setText("")
@@ -616,6 +739,21 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
             self.detail_path.setText(_safe_relative_path(node))
             lines = node.state.log.lines
             self.log.setPlainText("\n".join(lines) if lines else "No log entries.")
+
+        def _show_node_menu(self, pos) -> None:
+            item = self.project_tree.itemAt(pos)
+            if item is None:
+                return
+            self.project_tree.setCurrentItem(item)
+            menu = QtWidgets.QMenu(self)
+            menu.addAction(self.sync_selected_action)
+            menu.addAction(self.refresh_node_action)
+            if self.clone_node_action.isEnabled():
+                menu.addAction(self.clone_node_action)
+            menu.addSeparator()
+            menu.addAction(self.copy_path_action)
+            menu.addAction(self.show_log_action)
+            menu.exec(self.project_tree.viewport().mapToGlobal(pos))
 
 
     class TrayController:
@@ -668,6 +806,8 @@ def _theme_icon(name: str, fallback: str):
         "Sync": QtWidgets.QStyle.SP_DialogApplyButton,
         "SyncSelected": QtWidgets.QStyle.SP_ArrowRight,
         "Quit": QtWidgets.QStyle.SP_DialogCloseButton,
+        "Copy": QtWidgets.QStyle.SP_FileDialogContentsView,
+        "Log": QtWidgets.QStyle.SP_FileDialogInfoView,
         "Folder": QtWidgets.QStyle.SP_DirIcon,
         "Git": QtWidgets.QStyle.SP_DriveHDIcon,
         "Rsync": QtWidgets.QStyle.SP_DriveNetIcon,
@@ -688,6 +828,10 @@ def _node_can_expand(node: Node) -> bool:
         or node.is_folder
         or isinstance(node, (ProjectNode, PeerNode))
     )
+
+
+def _node_can_clone(node: Node) -> bool:
+    return not node.is_folder and not node.state.presence.exists_locally
 
 
 def _node_icon(node: Node):

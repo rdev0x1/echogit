@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import time
+from unittest import mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from echogit.config import Config
@@ -192,6 +193,93 @@ class TestQtApp(unittest.TestCase):
             _wait_for_idle(window)
 
         self.assertTrue(peer_node.is_scanned())
+
+    def test_node_actions_copy_path_and_focus_log(self):
+        if qt_app.QtWidgets is None:
+            self.skipTest("PySide6 is not installed")
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            base = Path(tmp_dir)
+            config = Config.load_from_buffer(
+                f"[DEFAULT]\nprojects_path={base}\ngit_path={base}\n"
+            )
+            service = EchogitService(config)
+
+            app = qt_app.QtWidgets.QApplication.instance()
+            if app is None:
+                app = qt_app.QtWidgets.QApplication([])
+            window = qt_app.MainWindow(service)
+            _wait_for_idle(window)
+
+        item = window.project_tree.topLevelItem(0)
+        window.project_tree.setCurrentItem(item)
+        window.copy_selected_path()
+        window.focus_selected_log()
+
+        self.assertEqual(app.clipboard().text(), str(window._root.path))
+        self.assertTrue(window.copy_path_action.isEnabled())
+        self.assertTrue(window.show_log_action.isEnabled())
+
+    def test_refresh_selected_node_uses_background_loader(self):
+        if qt_app.QtWidgets is None:
+            self.skipTest("PySide6 is not installed")
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            base = Path(tmp_dir)
+            config = Config.load_from_buffer(
+                f"[DEFAULT]\nprojects_path={base}\ngit_path={base}\n"
+            )
+            service = EchogitService(config)
+
+            app = qt_app.QtWidgets.QApplication.instance()
+            if app is None:
+                app = qt_app.QtWidgets.QApplication([])
+            window = qt_app.MainWindow(service)
+            _wait_for_idle(window)
+
+            window.project_tree.setCurrentItem(window.project_tree.topLevelItem(0))
+            window.refresh_selected_node()
+            self.assertIsNotNone(window._load_thread)
+            _wait_for_idle(window)
+
+        self.assertIsNone(window._load_thread)
+
+    def test_clone_action_runs_in_background_for_remote_node(self):
+        if qt_app.QtWidgets is None:
+            self.skipTest("PySide6 is not installed")
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            base = Path(tmp_dir)
+            (base / "alpha/.rsync").mkdir(parents=True)
+            config = Config.load_from_buffer(
+                f"[DEFAULT]\nprojects_path={base}\ngit_path={base}\n"
+            )
+            service = EchogitService(config)
+
+            app = qt_app.QtWidgets.QApplication.instance()
+            if app is None:
+                app = qt_app.QtWidgets.QApplication([])
+            window = qt_app.MainWindow(service)
+            _wait_for_idle(window)
+
+            item = window.project_tree.topLevelItem(0).child(0)
+            node = item.data(0, qt_app.NODE_ROLE)
+            node.state.presence.exists_locally = False
+            window.project_tree.setCurrentItem(item)
+            window._update_action_state()
+
+            def clone_ok():
+                node.state.presence.exists_locally = True
+                return True
+
+            with mock.patch.object(node, "clone", side_effect=clone_ok) as clone:
+                window.clone_selected_node()
+                self.assertIsNotNone(window._clone_thread)
+                _wait_for_idle(window)
+
+        clone.assert_called_once()
+        self.assertIsNone(window._clone_thread)
+        self.assertFalse(window.clone_node_action.isEnabled())
 
 
 def _wait_for_idle(window, timeout: float = 5.0) -> None:
