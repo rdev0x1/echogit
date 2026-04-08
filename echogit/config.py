@@ -8,12 +8,21 @@ from __future__ import annotations
 
 import configparser
 import os
+from dataclasses import dataclass
 from functools import cached_property
 from io import StringIO
 from pathlib import Path
 from typing import List, Set
 
 from echogit.utils import _is_local_peer, is_peer_reachable, run_ssh_command
+
+
+@dataclass(frozen=True)
+class ConfigIssue:
+    severity: str
+    field: str
+    message: str
+    value: str = ""
 
 
 class Config:
@@ -73,6 +82,10 @@ class Config:
         self.auto_commit_projects = auto_commit_projects
         self.ignore_peers_down = ignore_peers_down
         self.remote_name = remote_name
+
+    @property
+    def configured_peers(self) -> List[str]:
+        return list(self._all_peers)
 
     @cached_property
     def peers(self) -> List[str]:
@@ -212,6 +225,66 @@ class Config:
         path = path.expanduser().resolve()
         return any(path.is_relative_to(allowed) for allowed in allowed_paths)
 
+    def validate(self) -> list[ConfigIssue]:
+        """
+        Return local configuration issues without probing peer reachability.
+        """
+        issues: list[ConfigIssue] = []
+        issues.extend(_validate_directory("projects_path", self.projects_path, True))
+
+        if self.git_path is None:
+            issues.append(
+                ConfigIssue(
+                    "warning",
+                    "git_path",
+                    "No local store is configured; peer discovery and cloning are limited.",
+                )
+            )
+        else:
+            issues.extend(_validate_directory("git_path", self.git_path, False))
+
+        seen_peers = set()
+        for peer in self._all_peers:
+            if peer in seen_peers:
+                issues.append(
+                    ConfigIssue("warning", "peers", f"Duplicate peer '{peer}'.", peer)
+                )
+            seen_peers.add(peer)
+
+        if self.remote_name and self.remote_name not in seen_peers:
+            issues.append(
+                ConfigIssue(
+                    "warning",
+                    "remote_name",
+                    "remote_name is not listed in peers.",
+                    self.remote_name,
+                )
+            )
+
+        for peer, allowed_paths in self.peer_allowed_paths.items():
+            for allowed in allowed_paths:
+                if not allowed.is_relative_to(self.projects_path):
+                    issues.append(
+                        ConfigIssue(
+                            "warning",
+                            f"{peer}.allowed_paths",
+                            "Allowed path is outside projects_path and will not match.",
+                            str(allowed),
+                        )
+                    )
+
+        for project in self.auto_commit_projects:
+            if project.is_absolute():
+                issues.append(
+                    ConfigIssue(
+                        "warning",
+                        "AUTOCOMMIT.projects",
+                        "Auto-commit projects should be relative to projects_path.",
+                        str(project),
+                    )
+                )
+        return issues
+
 
 def _split_csv(raw: str) -> list[str]:
     return [item.strip() for item in raw.split(",") if item.strip()]
@@ -219,6 +292,27 @@ def _split_csv(raw: str) -> list[str]:
 
 def _split_lines(raw: str) -> list[str]:
     return [item.strip() for item in raw.replace(",", "\n").splitlines() if item.strip()]
+
+
+def _validate_directory(
+    field: str,
+    path: Path,
+    required: bool,
+) -> list[ConfigIssue]:
+    issues: list[ConfigIssue] = []
+    value = str(path)
+    if not path.exists():
+        severity = "error" if required else "warning"
+        issues.append(
+            ConfigIssue(severity, field, "Path does not exist.", value)
+        )
+        return issues
+    if not path.is_dir():
+        issues.append(ConfigIssue("error", field, "Path is not a directory.", value))
+        return issues
+    if not os.access(path, os.R_OK | os.X_OK):
+        issues.append(ConfigIssue("error", field, "Path is not readable.", value))
+    return issues
 
 
 def _expand_path_for_home(raw: Path, home_dir: Path) -> Path:

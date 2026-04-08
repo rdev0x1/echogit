@@ -1,4 +1,5 @@
 import os
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -18,6 +19,44 @@ class TestConfig(unittest.TestCase):
 
     def test_git_path(self):
         self.assertIsNotNone(self.config.git_path)
+
+    def test_validate_accepts_usable_local_paths(self):
+        config = Config.load_from_buffer(
+            "[DEFAULT]\nprojects_path=/tmp\ngit_path=/tmp\n"
+        )
+
+        self.assertEqual(config.validate(), [])
+
+    def test_validate_reports_missing_projects_path(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            base = Path(tmp_dir)
+            config = Config.load_from_buffer(
+                "[DEFAULT]\n"
+                f"projects_path={base / 'missing'}\n"
+                f"git_path={base}\n"
+            )
+
+            issues = config.validate()
+
+        self.assertTrue(any(issue.field == "projects_path" for issue in issues))
+        self.assertTrue(any(issue.severity == "error" for issue in issues))
+
+    def test_validate_reports_allowed_path_outside_projects_path(self):
+        config = Config.load_from_buffer(
+            "[DEFAULT]\n"
+            "projects_path=/tmp/echogit-data\n"
+            "git_path=/tmp\n"
+            "[PEERS]\n"
+            "peers=peer1\n"
+            "[peer1]\n"
+            "allowed_paths=/var/tmp\n"
+        )
+
+        issues = config.validate()
+
+        self.assertTrue(
+            any(issue.field == "peer1.allowed_paths" for issue in issues)
+        )
 
     def test_load_peers(self):
         peers = self.config._all_peers

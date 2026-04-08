@@ -58,6 +58,50 @@ class TestQtApp(unittest.TestCase):
         self.assertIn("2 projects", window.summary_label.text())
         self.assertEqual(window.progress_bar.value(), 0)
 
+    def test_config_action_counts_validation_warnings(self):
+        if qt_app.QtWidgets is None:
+            self.skipTest("PySide6 is not installed")
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            base = Path(tmp_dir)
+            data = base / "data"
+            data.mkdir()
+            config = Config.load_from_buffer(
+                "[DEFAULT]\n"
+                f"projects_path={data}\n"
+                f"git_path={base / 'missing-store'}\n"
+            )
+            service = EchogitService(config)
+
+            app = qt_app.QtWidgets.QApplication.instance()
+            if app is None:
+                app = qt_app.QtWidgets.QApplication([])
+            window = qt_app.MainWindow(service)
+            _wait_for_idle(window)
+
+        self.assertEqual(window.config_action.text(), "Config (1)")
+
+    def test_config_dialog_lists_validation_issues(self):
+        if qt_app.QtWidgets is None:
+            self.skipTest("PySide6 is not installed")
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            base = Path(tmp_dir)
+            config = Config.load_from_buffer(
+                "[DEFAULT]\n"
+                f"projects_path={base / 'missing-data'}\n"
+                f"git_path={base}\n"
+            )
+
+            app = qt_app.QtWidgets.QApplication.instance()
+            if app is None:
+                app = qt_app.QtWidgets.QApplication([])
+            dialog = qt_app.ConfigDialog(config)
+
+        item = dialog.issue_tree.topLevelItem(0)
+        self.assertEqual(item.text(0), "ERROR")
+        self.assertEqual(item.text(1), "projects_path")
+
     def test_main_window_shows_selected_node_log(self):
         if qt_app.QtWidgets is None:
             self.skipTest("PySide6 is not installed")

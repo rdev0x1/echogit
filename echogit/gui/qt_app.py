@@ -259,6 +259,71 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
                 item.setForeground(0, QtGui.QBrush(QtGui.QColor("#1f2528")))
 
 
+    class ConfigDialog(QtWidgets.QDialog):
+        def __init__(self, config: Config, parent=None):
+            super().__init__(parent)
+            self._config = config
+            self.issues = config.validate()
+            self.setObjectName("configDialog")
+            self.setWindowTitle("Echogit Configuration")
+            self.resize(760, 430)
+
+            layout = QtWidgets.QVBoxLayout(self)
+            layout.setContentsMargins(18, 16, 18, 16)
+            layout.setSpacing(12)
+
+            title = QtWidgets.QLabel("Configuration")
+            title.setObjectName("configTitle")
+            layout.addWidget(title)
+
+            summary = QtWidgets.QLabel(_config_summary_text(config, self.issues))
+            summary.setObjectName(_config_summary_object_name(self.issues))
+            layout.addWidget(summary)
+
+            details = QtWidgets.QLabel(_config_details_text(config))
+            details.setObjectName("configDetails")
+            details.setWordWrap(True)
+            layout.addWidget(details)
+
+            self.issue_tree = QtWidgets.QTreeWidget()
+            self.issue_tree.setColumnCount(4)
+            self.issue_tree.setHeaderLabels(["Status", "Setting", "Message", "Value"])
+            self.issue_tree.setRootIsDecorated(False)
+            self.issue_tree.setAlternatingRowColors(True)
+            self.issue_tree.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+            self.issue_tree.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+            header = self.issue_tree.header()
+            header.setStretchLastSection(True)
+            header.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeToContents)
+            header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeToContents)
+            header.setSectionResizeMode(2, QtWidgets.QHeaderView.Stretch)
+            header.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeToContents)
+            self._populate_issues()
+            layout.addWidget(self.issue_tree, 1)
+
+            buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Close)
+            buttons.rejected.connect(self.reject)
+            layout.addWidget(buttons)
+
+        def _populate_issues(self) -> None:
+            if not self.issues:
+                item = QtWidgets.QTreeWidgetItem(
+                    ["OK", "config", "Configuration looks usable.", ""]
+                )
+                item.setIcon(0, _theme_icon("emblem-default", "Ready"))
+                item.setForeground(0, QtGui.QBrush(QtGui.QColor("#047857")))
+                self.issue_tree.addTopLevelItem(item)
+                return
+            for issue in self.issues:
+                status = issue.severity.upper()
+                item = QtWidgets.QTreeWidgetItem(
+                    [status, issue.field, issue.message, issue.value]
+                )
+                item.setIcon(0, _issue_icon(issue.severity))
+                item.setForeground(0, _issue_brush(issue.severity))
+                self.issue_tree.addTopLevelItem(item)
+
+
     class MainWindow(QtWidgets.QMainWindow):
         def __init__(self, service: EchogitService):
             super().__init__()
@@ -364,6 +429,10 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
             self.sync_selected_action.setToolTip("Sync selected node")
             self.sync_selected_action.triggered.connect(self.sync_selected)
             self.sync_selected_action.setEnabled(False)
+            self.config_action = QtGui.QAction("Config", self)
+            self.config_action.setIcon(_theme_icon("preferences-system", "Config"))
+            self.config_action.setToolTip("Validate configuration")
+            self.config_action.triggered.connect(self.show_config)
             self.refresh_node_action = QtGui.QAction("Refresh Node", self)
             self.refresh_node_action.setIcon(_theme_icon("view-refresh", "Refresh"))
             self.refresh_node_action.triggered.connect(self.refresh_selected_node)
@@ -391,9 +460,11 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
             toolbar.addAction(self.refresh_action)
             toolbar.addAction(self.sync_action)
             toolbar.addAction(self.sync_selected_action)
+            toolbar.addAction(self.config_action)
             self.addToolBar(toolbar)
 
             self.statusBar().showMessage("Ready")
+            self._refresh_config_action()
             self.refresh_tree()
 
         def refresh_tree(self) -> None:
@@ -449,6 +520,11 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
                 return
             self.log.setFocus()
             self.log.moveCursor(QtGui.QTextCursor.Start)
+
+        def show_config(self) -> None:
+            dialog = ConfigDialog(self._service.config, self)
+            dialog.exec()
+            self._refresh_config_action()
 
         def _start_sync(self, node: Node) -> None:
             if self._is_busy():
@@ -653,6 +729,21 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
             self.copy_path_action.setEnabled(node is not None)
             self.show_log_action.setEnabled(node is not None)
 
+        def _refresh_config_action(self) -> None:
+            issues = self._service.config.validate()
+            errors = sum(1 for issue in issues if issue.severity == "error")
+            warnings = sum(1 for issue in issues if issue.severity == "warning")
+            if errors:
+                self.config_action.setText(f"Config ({errors})")
+                self.config_action.setIcon(_theme_icon("dialog-error", "Error"))
+                return
+            if warnings:
+                self.config_action.setText(f"Config ({warnings})")
+                self.config_action.setIcon(_theme_icon("dialog-warning", "Dirty"))
+                return
+            self.config_action.setText("Config")
+            self.config_action.setIcon(_theme_icon("preferences-system", "Config"))
+
         def _set_activity(self, text: str) -> None:
             self.activity_label.setText(text)
             self.statusBar().showMessage(text)
@@ -769,6 +860,7 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
             menu.addAction(window.refresh_action)
             menu.addAction(window.sync_action)
             menu.addAction(window.sync_selected_action)
+            menu.addAction(window.config_action)
             menu.addSeparator()
             menu.addAction(window.quit_action)
             self._tray.setContextMenu(menu)
@@ -785,6 +877,53 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
         def _on_activated(self, reason) -> None:
             if reason == QtWidgets.QSystemTrayIcon.Trigger:
                 self._show_window()
+
+
+def _config_summary_text(config: Config, issues) -> str:
+    errors = sum(1 for issue in issues if issue.severity == "error")
+    warnings = sum(1 for issue in issues if issue.severity == "warning")
+    peers = len(config.configured_peers)
+    if errors:
+        return f"{errors} error(s), {warnings} warning(s), {peers} peer(s)"
+    if warnings:
+        return f"{warnings} warning(s), {peers} peer(s)"
+    return f"Ready, {peers} peer(s)"
+
+
+def _config_summary_object_name(issues) -> str:
+    if any(issue.severity == "error" for issue in issues):
+        return "configSummaryError"
+    if any(issue.severity == "warning" for issue in issues):
+        return "configSummaryWarning"
+    return "configSummaryOk"
+
+
+def _config_details_text(config: Config) -> str:
+    git_path = str(config.git_path) if config.git_path is not None else "not configured"
+    peers = ", ".join(config.configured_peers) if config.configured_peers else "none"
+    return (
+        f"Data: {config.projects_path}\n"
+        f"Store: {git_path}\n"
+        f"Remote name: {config.remote_name or 'not configured'}\n"
+        f"Peers: {peers}"
+    )
+
+
+def _issue_icon(severity: str):
+    if severity == "error":
+        return _theme_icon("dialog-error", "Error")
+    if severity == "warning":
+        return _theme_icon("dialog-warning", "Dirty")
+    return _theme_icon("emblem-default", "Ready")
+
+
+def _issue_brush(severity: str):
+    colors = {
+        "error": "#b91c1c",
+        "warning": "#a16207",
+        "info": "#2563a0",
+    }
+    return QtGui.QBrush(QtGui.QColor(colors.get(severity, "#47545a")))
 
 
 def _app_icon():
@@ -806,6 +945,7 @@ def _theme_icon(name: str, fallback: str):
         "Sync": QtWidgets.QStyle.SP_DialogApplyButton,
         "SyncSelected": QtWidgets.QStyle.SP_ArrowRight,
         "Quit": QtWidgets.QStyle.SP_DialogCloseButton,
+        "Config": QtWidgets.QStyle.SP_FileDialogDetailedView,
         "Copy": QtWidgets.QStyle.SP_FileDialogContentsView,
         "Log": QtWidgets.QStyle.SP_FileDialogInfoView,
         "Folder": QtWidgets.QStyle.SP_DirIcon,
@@ -1038,6 +1178,43 @@ def _style_sheet() -> str:
         font-weight: 600;
     }
     QLabel#detailPath {
+        color: #47545a;
+        font-size: 12px;
+    }
+    QDialog#configDialog {
+        background: #f4f6f7;
+        color: #1f2528;
+    }
+    QLabel#configTitle {
+        color: #1f2528;
+        font-size: 18px;
+        font-weight: 700;
+    }
+    QLabel#configSummaryOk {
+        background: #d7ede4;
+        border: 1px solid #9fcfb8;
+        border-radius: 4px;
+        color: #164436;
+        font-weight: 700;
+        padding: 7px 10px;
+    }
+    QLabel#configSummaryWarning {
+        background: #fff4cf;
+        border: 1px solid #e5c25a;
+        border-radius: 4px;
+        color: #6f4d00;
+        font-weight: 700;
+        padding: 7px 10px;
+    }
+    QLabel#configSummaryError {
+        background: #fee2e2;
+        border: 1px solid #f0a1a1;
+        border-radius: 4px;
+        color: #7f1d1d;
+        font-weight: 700;
+        padding: 7px 10px;
+    }
+    QLabel#configDetails {
         color: #47545a;
         font-size: 12px;
     }
