@@ -101,11 +101,11 @@ class GitPeerNode(PeerNode):
 
     def sync(self, on_progress=None, should_stop=None) -> bool:
         if self._sync_cancelled(should_stop):
-            return self.stop_sync(on_progress)
+            return self.stop_sync_tree(on_progress)
         lock = self._get_peer_lock(self.name)
         with lock:
             if self._sync_cancelled(should_stop):
-                return self.stop_sync(on_progress)
+                return self.stop_sync_tree(on_progress)
 
             # If this project is not cloned, then there is nothing to sync
             if not self.state.presence.exists_locally:
@@ -150,14 +150,14 @@ class GitPeerNode(PeerNode):
 
             for cmd in cmds_to_run:
                 if self._sync_cancelled(should_stop):
-                    return self.stop_sync(on_progress)
+                    return self.stop_sync_tree(on_progress)
                 success, out = safe_run_command(cmd, cwd=path)
                 self.log(out, not success)
                 if not success:
                     return self._finalize_sync(False, on_progress)
 
             if self._sync_cancelled(should_stop):
-                return self.stop_sync(on_progress)
+                return self.stop_sync_tree(on_progress)
             self._branches_loaded = False
             self._load_branch_nodes()
             return super().sync(on_progress=on_progress, should_stop=should_stop)

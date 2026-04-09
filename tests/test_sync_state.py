@@ -84,7 +84,7 @@ class TestSyncState(unittest.TestCase):
         self.assertEqual(node.state.sync.reason, "user_stop")
         self.assertTrue(node.is_synced(gen))
 
-    def test_stop_callback_prevents_later_sequential_children(self):
+    def test_stop_callback_marks_later_sequential_children_stopped(self):
         parent = DummyNode(self.config.projects_path / "parent", config=self.config)
         parent.sync_parallel = False
         first = RecordingNode(self.config.projects_path / "first", config=self.config)
@@ -97,7 +97,7 @@ class TestSyncState(unittest.TestCase):
             if node is first:
                 stop["requested"] = True
 
-        parent.begin_sync()
+        parent.begin_sync_tree()
         ok = parent.sync(
             on_progress=on_progress,
             should_stop=lambda: stop["requested"],
@@ -107,7 +107,25 @@ class TestSyncState(unittest.TestCase):
         self.assertEqual(parent.sync_state(), "stopped")
         self.assertEqual(first.sync_count, 1)
         self.assertEqual(second.sync_count, 0)
-        self.assertEqual(second.sync_state(), "unknown")
+        self.assertEqual(second.sync_state(), "stopped")
+
+    def test_stop_tree_keeps_completed_nodes_and_marks_unfinished_descendants(self):
+        parent = DummyNode(self.config.projects_path / "parent", config=self.config)
+        first = DummyNode(self.config.projects_path / "first", config=self.config)
+        second = DummyNode(self.config.projects_path / "second", config=self.config)
+        nested = DummyNode(self.config.projects_path / "nested", config=self.config)
+        parent.add_child(first)
+        parent.add_child(second)
+        second.add_child(nested)
+        gen = parent.begin_sync_tree()
+        first.mark_synced(gen, True)
+
+        parent.stop_sync_tree()
+
+        self.assertEqual(first.sync_state(), "ok")
+        self.assertEqual(second.sync_state(), "stopped")
+        self.assertEqual(nested.sync_state(), "stopped")
+        self.assertEqual(parent.sync_state(), "stopped")
 
 
 if __name__ == "__main__":

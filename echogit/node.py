@@ -157,6 +157,23 @@ class Node:
         self.state.sync.reason = None
         return self.state.sync.gen
 
+    def begin_sync_tree(self) -> int:
+        """
+        Start one sync generation for this node and all discovered descendants.
+        """
+        self.state.sync.gen += 1
+        gen = self.state.sync.gen
+        self._set_sync_generation_deep(gen)
+        return gen
+
+    def _set_sync_generation_deep(self, gen: int) -> None:
+        if self.state.sync.gen < gen:
+            self.state.sync.gen = gen
+        self.state.sync.current_gen = gen
+        self.state.sync.reason = None
+        for child in list(self.children):
+            child._set_sync_generation_deep(gen)
+
     def mark_synced(
         self, gen: int, success: bool, reason: str | None = None
     ) -> None:
@@ -177,7 +194,7 @@ class Node:
         """
         self.state.log.has_error = False
         if self._sync_cancelled(should_stop):
-            return self.stop_sync(on_progress)
+            return self.stop_sync_tree(on_progress)
 
         success = True
         children = list(self.children)
@@ -195,7 +212,7 @@ class Node:
                 if not child.sync(on_progress=on_progress, should_stop=should_stop):
                     success = False
         if self._sync_cancelled(should_stop):
-            return self.stop_sync(on_progress)
+            return self.stop_sync_tree(on_progress)
         return self._finalize_sync(success, on_progress)
 
     def _sync_children_parallel(
@@ -290,6 +307,20 @@ class Node:
         if on_progress:
             on_progress(self, False)
         return False
+
+    def stop_sync_tree(self, on_progress=None, reason: str = "user_stop") -> bool:
+        """
+        Mark every discovered descendant unfinished in this generation as stopped.
+        """
+        for child in list(self.children):
+            child.stop_sync_tree(on_progress=on_progress, reason=reason)
+        if self._is_unfinished_sync_generation():
+            self.stop_sync(on_progress=on_progress, reason=reason)
+        return False
+
+    def _is_unfinished_sync_generation(self) -> bool:
+        current_gen = self.state.sync.current_gen
+        return current_gen is not None and self.state.sync.last_gen != current_gen
 
     def clone(self) -> bool:
         """

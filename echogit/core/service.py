@@ -78,6 +78,7 @@ class EchogitService:
                 return
             on_progress(_sync_progress_from_project(node, ok))
 
+        root_node.begin_sync_tree()
         ok = root_node.sync(
             on_progress=_on_node_progress if on_progress is not None else None,
             should_stop=should_stop,

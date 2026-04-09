@@ -130,7 +130,7 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
             try:
                 self._node.ensure_scanned_deep()
                 self.prepared.emit(_sync_progress_total(self._node))
-                self._node.begin_sync()
+                self._node.begin_sync_tree()
                 ok = self._node.sync(
                     on_progress=self._on_progress,
                     should_stop=self.is_stop_requested,
