@@ -11,15 +11,25 @@ class DummyNode(Node):
         super().__init__(path=path, config=config)
         self._succeed = succeed
 
-    def sync(self, on_progress=None) -> bool:
+    def sync(self, on_progress=None, should_stop=None) -> bool:
         if self._succeed:
-            return super().sync(on_progress=on_progress)
+            return super().sync(on_progress=on_progress, should_stop=should_stop)
         self.state.sync.state = "error"
         if self.state.sync.current_gen is not None:
             self.mark_synced(self.state.sync.current_gen, False)
         if on_progress:
             on_progress(self, False)
         return False
+
+
+class RecordingNode(DummyNode):
+    def __init__(self, path: Path, *, config: Config):
+        super().__init__(path=path, config=config)
+        self.sync_count = 0
+
+    def sync(self, on_progress=None, should_stop=None) -> bool:
+        self.sync_count += 1
+        return super().sync(on_progress=on_progress, should_stop=should_stop)
 
 
 class TestSyncState(unittest.TestCase):
@@ -63,6 +73,41 @@ class TestSyncState(unittest.TestCase):
         self.assertEqual(node.sync_state(), "skipped")
         self.assertEqual(node.state.sync.reason, "peer_down")
         self.assertTrue(node.is_synced(gen))
+
+    def test_stop_sync_records_category(self):
+        node = DummyNode(self.config.projects_path / "dummy", config=self.config)
+        gen = node.begin_sync()
+
+        self.assertFalse(node.stop_sync())
+
+        self.assertEqual(node.sync_state(), "stopped")
+        self.assertEqual(node.state.sync.reason, "user_stop")
+        self.assertTrue(node.is_synced(gen))
+
+    def test_stop_callback_prevents_later_sequential_children(self):
+        parent = DummyNode(self.config.projects_path / "parent", config=self.config)
+        parent.sync_parallel = False
+        first = RecordingNode(self.config.projects_path / "first", config=self.config)
+        second = RecordingNode(self.config.projects_path / "second", config=self.config)
+        parent.add_child(first)
+        parent.add_child(second)
+        stop = {"requested": False}
+
+        def on_progress(node, _ok):
+            if node is first:
+                stop["requested"] = True
+
+        parent.begin_sync()
+        ok = parent.sync(
+            on_progress=on_progress,
+            should_stop=lambda: stop["requested"],
+        )
+
+        self.assertFalse(ok)
+        self.assertEqual(parent.sync_state(), "stopped")
+        self.assertEqual(first.sync_count, 1)
+        self.assertEqual(second.sync_count, 0)
+        self.assertEqual(second.sync_state(), "unknown")
 
 
 if __name__ == "__main__":

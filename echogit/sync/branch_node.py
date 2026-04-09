@@ -90,6 +90,10 @@ class BranchNode(Node):
     def _fail_sync(self, path: str, original_branch: str | None, on_progress) -> bool:
         return self._finish_sync(False, path, original_branch, on_progress)
 
+    def _stop_sync(self, path: str, original_branch: str | None, on_progress) -> bool:
+        self._restore_branch(path, original_branch)
+        return self.stop_sync(on_progress)
+
     def _current_branch(self, path: str) -> str | None:
         ok, out = safe_run_command(
             ["git", "-C", path, "rev-parse", "--abbrev-ref", "HEAD"], cwd=path
@@ -179,7 +183,7 @@ class BranchNode(Node):
         self.log(out, not success)
         return self._finish_sync(success, path, original_branch, on_progress)
 
-    def sync(self, on_progress=None) -> bool:
+    def sync(self, on_progress=None, should_stop=None) -> bool:
         remote = self.peer_name
         path = str(self.path)
         branch = self.name
@@ -187,9 +191,13 @@ class BranchNode(Node):
 
         # Remember current branch to restore later
         original_branch = self._current_branch(path)
+        if self._sync_cancelled(should_stop):
+            return self._stop_sync(path, original_branch, on_progress)
 
         # Only attempt to pull if the branch exists on the remote
         if self._remote_branch_exists(path, remote, branch):
+            if self._sync_cancelled(should_stop):
+                return self._stop_sync(path, original_branch, on_progress)
             if self.config.ignore_peers_down:
                 if (
                     not self.config.is_local_peer(remote)
@@ -203,6 +211,9 @@ class BranchNode(Node):
             # Fetch only the requested branch so the remote ref is up to date.
             if not self._fetch_remote_branch(path, remote, branch):
                 return self._fail_sync(path, original_branch, on_progress)
+
+            if self._sync_cancelled(should_stop):
+                return self._stop_sync(path, original_branch, on_progress)
 
             # If refs already match, avoid checkout to preserve local changes.
             # Still continue so auto-commit + push can run.
@@ -221,6 +232,8 @@ class BranchNode(Node):
 
         # Auto-commit, if project configured for auto-commit
         if auto_commit_enabled:
+            if self._sync_cancelled(should_stop):
+                return self._stop_sync(path, original_branch, on_progress)
             current_branch = self._current_branch(path)
             if current_branch != branch:
                 if not self._checkout_or_create(path, remote, branch):
@@ -229,4 +242,6 @@ class BranchNode(Node):
                 return False
 
         # Push current branch back to remote
+        if self._sync_cancelled(should_stop):
+            return self._stop_sync(path, original_branch, on_progress)
         return self._push_branch(path, original_branch, on_progress)

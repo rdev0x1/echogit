@@ -16,6 +16,7 @@ from echogit.sync.rsync_sync import RsyncProjectNode
 
 
 ProgressCallback = Callable[[SyncProgress], None]
+StopCallback = Callable[[], bool]
 
 
 class EchogitService:
@@ -68,6 +69,7 @@ class EchogitService:
         self,
         root: Path | None = None,
         on_progress: ProgressCallback | None = None,
+        should_stop: StopCallback | None = None,
     ) -> SyncResult:
         root_node = self.build_tree(root)
 
@@ -77,7 +79,8 @@ class EchogitService:
             on_progress(_sync_progress_from_project(node, ok))
 
         ok = root_node.sync(
-            on_progress=_on_node_progress if on_progress is not None else None
+            on_progress=_on_node_progress if on_progress is not None else None,
+            should_stop=should_stop,
         )
         return SyncResult(ok=ok, root=root_node.path)
 

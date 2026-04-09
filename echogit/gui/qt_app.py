@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import threading
 
 from echogit.config import Config
 from echogit.core import EchogitService
@@ -122,6 +123,7 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
         def __init__(self, node: Node):
             super().__init__()
             self._node = node
+            self._stop_requested = threading.Event()
 
         @QtCore.Slot()
         def run(self) -> None:
@@ -129,11 +131,20 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
                 self._node.ensure_scanned_deep()
                 self.prepared.emit(_sync_progress_total(self._node))
                 self._node.begin_sync()
-                ok = self._node.sync(on_progress=self._on_progress)
+                ok = self._node.sync(
+                    on_progress=self._on_progress,
+                    should_stop=self.is_stop_requested,
+                )
             except Exception as exc:  # pylint: disable=broad-exception-caught
                 self.failed.emit(str(exc))
                 return
             self.finished.emit(self._node, ok)
+
+        def request_stop(self) -> None:
+            self._stop_requested.set()
+
+        def is_stop_requested(self) -> bool:
+            return self._stop_requested.is_set()
 
         def _on_progress(self, node: Node, ok: bool) -> None:
             self.progress.emit(node, ok)
@@ -429,6 +440,11 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
             self.sync_selected_action.setToolTip("Sync selected node")
             self.sync_selected_action.triggered.connect(self.sync_selected)
             self.sync_selected_action.setEnabled(False)
+            self.stop_action = QtGui.QAction("Stop", self)
+            self.stop_action.setIcon(_theme_icon("process-stop", "Stop"))
+            self.stop_action.setToolTip("Stop sync after the current command")
+            self.stop_action.triggered.connect(self.stop_sync)
+            self.stop_action.setEnabled(False)
             self.config_action = QtGui.QAction("Config", self)
             self.config_action.setIcon(_theme_icon("preferences-system", "Config"))
             self.config_action.setToolTip("Validate configuration")
@@ -460,6 +476,7 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
             toolbar.addAction(self.refresh_action)
             toolbar.addAction(self.sync_action)
             toolbar.addAction(self.sync_selected_action)
+            toolbar.addAction(self.stop_action)
             toolbar.addAction(self.config_action)
             self.addToolBar(toolbar)
 
@@ -496,6 +513,13 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
             if node is None:
                 return
             self._start_sync(node)
+
+        def stop_sync(self) -> None:
+            if self._worker is None:
+                return
+            self._worker.request_stop()
+            self._set_activity("Stopping after current command...")
+            self._update_action_state()
 
         def refresh_selected_node(self) -> None:
             node = self.project_tree.selected_node()
@@ -687,7 +711,10 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
             self._set_summary(self._root)
             self._refresh_selected_details()
             self._finish_progress()
-            self._set_activity("Sync OK" if ok else "Sync failed")
+            if _tree_was_stopped(node):
+                self._set_activity("Sync stopped")
+            else:
+                self._set_activity("Sync OK" if ok else "Sync failed")
 
         def _on_sync_failed(self, message: str) -> None:
             self._finish_progress()
@@ -722,6 +749,10 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
             self.sync_action.setEnabled(not busy and self._root is not None)
             self.refresh_action.setEnabled(not busy)
             self.sync_selected_action.setEnabled(not busy and node is not None)
+            self.stop_action.setEnabled(
+                self._worker is not None
+                and not self._worker.is_stop_requested()
+            )
             self.refresh_node_action.setEnabled(not busy and node is not None)
             self.clone_node_action.setEnabled(
                 not busy and node is not None and _node_can_clone(node)
@@ -860,6 +891,7 @@ if QtWidgets is not None and QtCore is not None and QtGui is not None:
             menu.addAction(window.refresh_action)
             menu.addAction(window.sync_action)
             menu.addAction(window.sync_selected_action)
+            menu.addAction(window.stop_action)
             menu.addAction(window.config_action)
             menu.addSeparator()
             menu.addAction(window.quit_action)
@@ -944,6 +976,7 @@ def _theme_icon(name: str, fallback: str):
         "Refresh": QtWidgets.QStyle.SP_BrowserReload,
         "Sync": QtWidgets.QStyle.SP_DialogApplyButton,
         "SyncSelected": QtWidgets.QStyle.SP_ArrowRight,
+        "Stop": QtWidgets.QStyle.SP_BrowserStop,
         "Quit": QtWidgets.QStyle.SP_DialogCloseButton,
         "Config": QtWidgets.QStyle.SP_FileDialogDetailedView,
         "Copy": QtWidgets.QStyle.SP_FileDialogContentsView,
@@ -992,7 +1025,7 @@ def _node_status_icon(node: Node):
     status = _node_status_text(node)
     if status == "ERR":
         return _theme_icon("dialog-error", "Error")
-    if status == "SKIP":
+    if status in {"SKIP", "STOP"}:
         return _theme_icon("dialog-information", "Unknown")
     if status in {"STALE", "DIRTY"}:
         return _theme_icon("dialog-warning", "Dirty")
@@ -1020,6 +1053,8 @@ def _node_kind(node: Node) -> str:
 def _node_status_text(node: Node) -> str:
     if node.has_error() or node.sync_state() == "error":
         return "ERR"
+    if node.sync_state() == "stopped":
+        return "STOP"
     if node.sync_state() == "skipped":
         return "SKIP"
     if not node.is_folder and not node.state.presence.exists_locally:
@@ -1040,6 +1075,7 @@ def _node_status_brush(node: Node):
     colors = {
         "ERR": "#b91c1c",
         "SKIP": "#64748b",
+        "STOP": "#64748b",
         "REMOTE": "#2563a0",
         "UNK": "#a16207",
         "SYNC?": "#a16207",
@@ -1074,6 +1110,12 @@ def _tree_counts(node: Node) -> dict[str, int]:
 
 def _node_has_own_error(node: Node) -> bool:
     return node.state.log.has_error or node.sync_state() == "error"
+
+
+def _tree_was_stopped(node: Node) -> bool:
+    if node.sync_state() == "stopped":
+        return True
+    return any(_tree_was_stopped(child) for child in list(node.children))
 
 
 def _sync_progress_total(node: Node) -> int:

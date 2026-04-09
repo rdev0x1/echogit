@@ -1,12 +1,15 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
-from typing import List
+from typing import Callable, List
 
 from echogit.config import Config
+
+
+SyncStopCallback = Callable[[], bool]
 
 
 @dataclass
@@ -164,30 +167,87 @@ class Node:
         self.state.sync.state = "ok" if success else "error"
         self.state.sync.reason = reason
 
-    def sync(self, on_progress=None) -> bool:
+    def sync(
+        self,
+        on_progress=None,
+        should_stop: SyncStopCallback | None = None,
+    ) -> bool:
         """
         sync a project using git or rsync.
         """
         self.state.log.has_error = False
+        if self._sync_cancelled(should_stop):
+            return self.stop_sync(on_progress)
+
         success = True
         children = list(self.children)
         if self.sync_parallel and self.SYNC_WORKERS > 1 and len(children) > 1:
-            with ThreadPoolExecutor(max_workers=self.SYNC_WORKERS) as executor:
-                futures = [
-                    executor.submit(child.sync, on_progress=on_progress)
-                    for child in children
-                ]
-                for future in futures:
+            success = self._sync_children_parallel(
+                children,
+                on_progress=on_progress,
+                should_stop=should_stop,
+            )
+        else:
+            for child in children:
+                if self._sync_cancelled(should_stop):
+                    success = False
+                    break
+                if not child.sync(on_progress=on_progress, should_stop=should_stop):
+                    success = False
+        if self._sync_cancelled(should_stop):
+            return self.stop_sync(on_progress)
+        return self._finalize_sync(success, on_progress)
+
+    def _sync_children_parallel(
+        self,
+        children: list["Node"],
+        *,
+        on_progress=None,
+        should_stop: SyncStopCallback | None = None,
+    ) -> bool:
+        success = True
+        workers = self.SYNC_WORKERS
+        child_iter = iter(children)
+
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            pending = set()
+
+            def submit_next() -> bool:
+                if self._sync_cancelled(should_stop):
+                    return False
+                try:
+                    child = next(child_iter)
+                except StopIteration:
+                    return False
+                pending.add(
+                    executor.submit(
+                        child.sync,
+                        on_progress=on_progress,
+                        should_stop=should_stop,
+                    )
+                )
+                return True
+
+            for _ in range(workers):
+                if not submit_next():
+                    break
+
+            while pending:
+                done, pending = wait(pending, return_when=FIRST_COMPLETED)
+                for future in done:
                     try:
                         if not future.result():
                             success = False
                     except Exception:  # pylint: disable=broad-exception-caught
                         success = False
-        else:
-            for child in children:
-                if not child.sync(on_progress=on_progress):
+                while len(pending) < workers and submit_next():
+                    pass
+                if self._sync_cancelled(should_stop):
                     success = False
-        return self._finalize_sync(success, on_progress)
+        return success
+
+    def _sync_cancelled(self, should_stop: SyncStopCallback | None) -> bool:
+        return should_stop is not None and should_stop()
 
     def _finalize_sync(self, success: bool, on_progress=None) -> bool:
         self.state.sync.state = "ok" if success else "error"
@@ -216,6 +276,20 @@ class Node:
         if on_progress:
             on_progress(self, True)
         return True
+
+    def stop_sync(self, on_progress=None, reason: str = "user_stop") -> bool:
+        """
+        Stop sync cooperatively without marking the node as an error.
+        """
+        self.state.sync.state = "stopped"
+        self.state.sync.reason = reason
+        if self.state.sync.current_gen is not None:
+            self.state.sync.last_gen = self.state.sync.current_gen
+        self.state.sync.current_gen = None
+        self.log("sync stopped")
+        if on_progress:
+            on_progress(self, False)
+        return False
 
     def clone(self) -> bool:
         """

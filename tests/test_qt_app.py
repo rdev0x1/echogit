@@ -172,6 +172,52 @@ class TestQtApp(unittest.TestCase):
         self.assertEqual(qt_app._node_status_text(node), "SKIP")
         self.assertIn("peer_down", node.state.sync.reason)
 
+    def test_stopped_node_status_is_distinct(self):
+        if qt_app.QtWidgets is None:
+            self.skipTest("PySide6 is not installed")
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            base = Path(tmp_dir)
+            config = Config.load_from_buffer(
+                f"[DEFAULT]\nprojects_path={base}\ngit_path={base}\n"
+            )
+            node = qt_app.FolderNode(path=base, config=config)
+
+        node.begin_sync()
+        node.stop_sync()
+
+        self.assertEqual(qt_app._node_status_text(node), "STOP")
+        self.assertTrue(qt_app._tree_was_stopped(node))
+
+    def test_stop_action_requests_worker_stop(self):
+        if qt_app.QtWidgets is None:
+            self.skipTest("PySide6 is not installed")
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            base = Path(tmp_dir)
+            config = Config.load_from_buffer(
+                f"[DEFAULT]\nprojects_path={base}\ngit_path={base}\n"
+            )
+            service = EchogitService(config)
+
+            app = qt_app.QtWidgets.QApplication.instance()
+            if app is None:
+                app = qt_app.QtWidgets.QApplication([])
+            window = qt_app.MainWindow(service)
+            _wait_for_idle(window)
+
+        worker = qt_app.NodeSyncWorker(window._root)
+        window._worker = worker
+        window._update_action_state()
+
+        self.assertTrue(window.stop_action.isEnabled())
+
+        window.stop_sync()
+
+        self.assertTrue(worker.is_stop_requested())
+        self.assertFalse(window.stop_action.isEnabled())
+        window._worker = None
+
     def test_busy_cursor_is_scoped(self):
         if qt_app.QtWidgets is None:
             self.skipTest("PySide6 is not installed")

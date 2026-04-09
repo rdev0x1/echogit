@@ -54,9 +54,14 @@ class RsyncPeerNode(PeerNode):
         self.log(out, not success)
         return success
 
-    def sync(self, on_progress=None) -> bool:
+    def sync(self, on_progress=None, should_stop=None) -> bool:
+        if self._sync_cancelled(should_stop):
+            return self.stop_sync(on_progress)
         lock = self._get_peer_lock(self.name)
         with lock:
+            if self._sync_cancelled(should_stop):
+                return self.stop_sync(on_progress)
+
             # If this project is not cloned, then there is nothing to sync
             if not self.state.presence.exists_locally:
                 return True
@@ -78,6 +83,8 @@ class RsyncPeerNode(PeerNode):
             if not self._ensure_remote_dir(rsync_path):
                 return self._finalize_sync(False, on_progress)
 
+            if self._sync_cancelled(should_stop):
+                return self.stop_sync(on_progress)
             path = str(self.path) + "/"
             target = self._rsync_location(rsync_path, trailing_slash=True)
             cmd = [
