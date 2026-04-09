@@ -6,11 +6,13 @@ from pathlib import Path
 from typing import Callable
 
 from echogit.config import Config
-from echogit.core.models import ProjectItem, SyncProgress, SyncResult
+from echogit.core.models import ProjectItem, SmokeReport, SyncProgress, SyncResult
 from echogit.discovery import ProjectRef, discover_local_projects, discover_remote_projects
 from echogit.node import Node
 from echogit.node_factory import from_path
+from echogit.sync.branch_node import BranchNode
 from echogit.sync.git_sync import GitProjectNode
+from echogit.sync.peer_node import PeerNode
 from echogit.sync.project_node import ProjectNode
 from echogit.sync.rsync_sync import RsyncProjectNode
 
@@ -65,6 +67,12 @@ class EchogitService:
         root_node.scan()
         return root_node
 
+    def smoke(self, root: Path | None = None, *, deep: bool = False) -> SmokeReport:
+        root_node = self.build_tree(root)
+        if deep:
+            root_node.ensure_scanned_deep()
+        return _smoke_report(root_node)
+
     def sync(
         self,
         root: Path | None = None,
@@ -118,3 +126,44 @@ def _sync_progress_from_project(node: ProjectNode, ok: bool) -> SyncProgress:
         sync_state=node.sync_state(),
         exists_locally=node.state.presence.exists_locally,
     )
+
+
+def _smoke_report(root: Node) -> SmokeReport:
+    counts = {
+        "folders": 0,
+        "projects": 0,
+        "git_projects": 0,
+        "rsync_projects": 0,
+        "peers": 0,
+        "branches": 0,
+        "remote_only": 0,
+        "dirty": 0,
+        "errors": 0,
+    }
+    _count_smoke_node(root, counts)
+    return SmokeReport(root=root.path, **counts)
+
+
+def _count_smoke_node(node: Node, counts: dict[str, int]) -> None:
+    if node.is_folder:
+        counts["folders"] += 1
+    if isinstance(node, GitProjectNode):
+        counts["projects"] += 1
+        counts["git_projects"] += 1
+    elif isinstance(node, RsyncProjectNode):
+        counts["projects"] += 1
+        counts["rsync_projects"] += 1
+    elif isinstance(node, PeerNode):
+        counts["peers"] += 1
+    elif isinstance(node, BranchNode):
+        counts["branches"] += 1
+
+    if not node.is_folder and not node.state.presence.exists_locally:
+        counts["remote_only"] += 1
+    if node.is_dirty():
+        counts["dirty"] += 1
+    if node.state.log.has_error or node.sync_state() == "error":
+        counts["errors"] += 1
+
+    for child in list(node.children):
+        _count_smoke_node(child, counts)

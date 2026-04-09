@@ -71,6 +71,22 @@ def main():
         help="include dirty status in progress output",
     )
 
+    smoke_parser = subparsers.add_parser(
+        "smoke",
+        help="Scan config/tree without running sync commands",
+    )
+    smoke_parser.add_argument("path", nargs="?", default=None)
+    smoke_parser.add_argument(
+        "--deep",
+        action="store_true",
+        help="load lazily discovered children under the selected path",
+    )
+    smoke_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="print smoke report as JSON",
+    )
+
     config_parser = subparsers.add_parser("config", help="Get/set configuration")
     config_parser.add_argument("path", nargs="?", default=None)
     config_parser.add_argument(
@@ -109,6 +125,8 @@ def main():
         _handle_list_remote(config, service, args.json, args.cache_ttl)
     elif args.command == "sync":
         _handle_sync(service, args.path, args.progress, args.status)
+    elif args.command == "smoke":
+        _handle_smoke(config, service, args.path, args.deep, args.json)
     elif args.command == "config":
         _handle_config(config, args.path, args.get, args.set_values)
     elif args.command == "tui":
@@ -270,6 +288,55 @@ def _handle_sync(
         print("Sync OK")
     else:
         print("Sync failed")
+        sys.exit(1)
+
+
+def _handle_smoke(
+    config: Config,
+    service: EchogitService,
+    path: str | None,
+    deep: bool,
+    as_json: bool,
+) -> None:
+    report = service.smoke(Path(path) if path else None, deep=deep)
+    issues = config.validate()
+    issue_data = [
+        {
+            "severity": issue.severity,
+            "field": issue.field,
+            "message": issue.message,
+            "value": issue.value,
+        }
+        for issue in issues
+    ]
+    failed = report.errors > 0 or any(issue.severity == "error" for issue in issues)
+    payload = report.to_dict()
+    payload["deep"] = deep
+    payload["config_issues"] = issue_data
+    payload["ok"] = not failed
+    if as_json:
+        print(json.dumps(payload))
+    else:
+        print(f"Root: {report.root}")
+        print(f"Deep scan: {deep}")
+        print(
+            "Nodes: "
+            f"{report.folders} folders, "
+            f"{report.projects} projects "
+            f"({report.git_projects} git, {report.rsync_projects} rsync), "
+            f"{report.peers} peers, {report.branches} branches"
+        )
+        print(
+            "State: "
+            f"{report.remote_only} remote-only, "
+            f"{report.dirty} dirty, "
+            f"{report.errors} errors"
+        )
+        for issue in issues:
+            value = f" [{issue.value}]" if issue.value else ""
+            print(f"{issue.severity.upper()}: {issue.field}: {issue.message}{value}")
+        print("Smoke OK" if not failed else "Smoke failed")
+    if failed:
         sys.exit(1)
 
 

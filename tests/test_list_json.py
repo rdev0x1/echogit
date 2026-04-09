@@ -20,7 +20,7 @@ class TestListJson(unittest.TestCase):
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
-            (base / "beta/.rsync").mkdir()
+            (base / "beta/.rsync").mkdir(parents=True)
 
             cfg_path = base / ".config/echogit/config.ini"
             cfg_path.parent.mkdir(parents=True, exist_ok=True)
@@ -50,6 +50,43 @@ class TestListJson(unittest.TestCase):
             rels = {item["rel"] for item in data}
             self.assertIn("alpha", rels)
             self.assertIn("beta", rels)
+
+    def test_smoke_json_output(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            base = Path(tmp_dir)
+            (base / "alpha").mkdir()
+            subprocess.run(
+                ["git", "init", str(base / "alpha")],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            (base / "beta/.rsync").mkdir(parents=True)
+
+            cfg_path = base / ".config/echogit/config.ini"
+            cfg_path.parent.mkdir(parents=True, exist_ok=True)
+            cfg_path.write_text(
+                f"[DEFAULT]\nprojects_path={base}\ngit_path={base}\n",
+                encoding="utf-8",
+            )
+
+            old_argv = os.sys.argv[:]
+            old_home = os.environ.get("HOME")
+            try:
+                os.sys.argv = ["echogit", "smoke", "--json"]
+                os.environ["HOME"] = str(base)
+                out = _capture_stdout(main)
+            finally:
+                os.sys.argv = old_argv
+                if old_home is None:
+                    os.environ.pop("HOME", None)
+                else:
+                    os.environ["HOME"] = old_home
+
+            data = json.loads(out)
+            self.assertTrue(data["ok"])
+            self.assertEqual(data["projects"], 2)
+            self.assertEqual(data["config_issues"], [])
 
 
 def _capture_stdout(func):

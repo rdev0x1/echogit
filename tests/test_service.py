@@ -104,6 +104,30 @@ class TestEchogitService(unittest.TestCase):
         self.assertEqual([child.name for child in root.children], ["alpha"])
         self.assertEqual([project.rel for project in projects], [Path("alpha")])
 
+    def test_smoke_counts_local_tree_without_syncing(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            base = Path(tmp_dir)
+            (base / "alpha").mkdir()
+            subprocess.run(
+                ["git", "init", str(base / "alpha")],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            (base / "beta/.rsync").mkdir(parents=True)
+            config = Config.load_from_buffer(
+                f"[DEFAULT]\nprojects_path={base}\ngit_path={base / 'store'}\n"
+            )
+            service = EchogitService(config)
+
+            report = service.smoke()
+
+        self.assertEqual(report.projects, 2)
+        self.assertEqual(report.git_projects, 1)
+        self.assertEqual(report.rsync_projects, 1)
+        self.assertEqual(report.errors, 0)
+        self.assertEqual(report.to_dict()["projects"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()

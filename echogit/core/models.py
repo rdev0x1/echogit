@@ -40,3 +40,31 @@ class SyncResult:
 
     def to_dict(self) -> dict[str, str | bool]:
         return {"ok": self.ok, "root": str(self.root)}
+
+
+@dataclass(frozen=True)
+class SmokeReport:
+    root: Path
+    folders: int
+    projects: int
+    git_projects: int
+    rsync_projects: int
+    peers: int
+    branches: int
+    remote_only: int
+    dirty: int
+    errors: int
+
+    def to_dict(self) -> dict[str, str | int]:
+        return {
+            "root": str(self.root),
+            "folders": self.folders,
+            "projects": self.projects,
+            "git_projects": self.git_projects,
+            "rsync_projects": self.rsync_projects,
+            "peers": self.peers,
+            "branches": self.branches,
+            "remote_only": self.remote_only,
+            "dirty": self.dirty,
+            "errors": self.errors,
+        }
