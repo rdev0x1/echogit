@@ -46,6 +46,16 @@ You can copy your SSH public key to a peer by running:
 
 ## Usage
 
+### Smoke Check
+
+Validate the configured tree without running sync commands:
+
+```bash
+echogit smoke [folder]
+echogit smoke [folder] --deep
+echogit smoke --json
+```
+
 ### Synchronizing Projects
 
 
@@ -66,6 +76,8 @@ Include dirty state in progress output:
 ```bash
 echogit sync [folder] --progress --status
 ```
+
+To stop a running sync, use the `Stop` action in the Qt app. It stops cooperatively after the current command finishes.
 
 ### Config
 
